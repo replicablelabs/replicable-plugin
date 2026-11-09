@@ -37,6 +37,11 @@ flowchart LR
   L1[headless_loop.py] -- "fresh claude -p per iteration, own worktree" --> A
 ```
 
+## Docs
+
+- [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
+- [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of 21 hooks (implemented and proposed), and hooks that call LLMs
+
 ## Install
 
 From inside Claude Code:

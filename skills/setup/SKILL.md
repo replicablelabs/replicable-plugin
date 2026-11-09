@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up replicable-harness for this project. Installs graphify's own Claude Code integration (CLAUDE.md rules + PreToolUse search/read hooks), builds the code graph locally, and records the test command.
+description: Set up or upgrade replicable-harness for this project. Installs graphify's own Claude Code integration (CLAUDE.md rules + PreToolUse search/read hooks), builds the code graph locally, records the test command, and creates or upgrades the project wiki (skeleton, CLAUDE.md schema section, Obsidian settings, CI check, harness_version).
 disable-model-invocation: true
 ---
 
@@ -22,5 +22,16 @@ disable-model-invocation: true
 5. If `test_command` is null or wrong, ask the user for the right command
    and write it to `.claude/replicable-harness.json` as `{"test": "..."}`.
 6. Optionally offer `graphify hook install` (rebuilds the graph on commit and
-   checkout) and adding `graphify-out/cache/` to `.gitignore`.
-7. Finish with one line saying what changed.
+   checkout).
+7. Wiki and upgrades: run `python3 <scripts.scaffold>` (a dry run: it writes
+   nothing). It prints whether an inference proxy is configured, then each
+   planned change with a diff. Relay the proxy line and any WARNING verbatim;
+   never write proxy settings or credentials yourself. Summarise the changes
+   (create/update, one line each; show a diff only for files that already
+   exist, such as `CLAUDE.md` and `.gitignore`). **Ask before applying**, then
+   run it again with `--apply`, and run `python3 <scripts.wiki> check`.
+   Existing wiki pages and `raw/` are never modified; only the plugin's own
+   files and marked sections are.
+8. Finish with one line saying what changed, and that the new files
+   (`wiki/`, `CLAUDE.md`, `.gitignore`, `.github/workflows/wiki.yml`,
+   `.claude/replicable-harness.json`) are meant to be committed.

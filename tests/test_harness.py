@@ -483,5 +483,117 @@ class WikiTests(unittest.TestCase):
                 wiki.parse_frontmatter(bad)
 
 
+import scaffold  # noqa: E402
+
+
+class ScaffoldTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        home = tempfile.TemporaryDirectory()  # no user settings leak into the proxy report
+        self.addCleanup(home.cleanup)
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}
+        self.env["HOME"] = home.name
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def run_scaffold(self, *args, **env):
+        res = subprocess.run([sys.executable, str(PLUGIN / "harness" / "scaffold.py"), "--root", str(self.root), *args],
+                             capture_output=True, text=True, timeout=60, env=dict(self.env, **env))
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        return res.stdout
+
+    def test_dry_run_writes_nothing_and_shows_diffs(self):
+        out = self.run_scaffold()
+        self.assertIn("(not set up) -> " + project.plugin_version(), out)
+        self.assertIn("+++ b/CLAUDE.md", out)
+        self.assertIn("dry run: nothing written", out)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_apply_creates_a_wiki_that_passes_check_and_is_idempotent(self):
+        self.write("CLAUDE.md", "# My project\n\nOwn rules.\n")
+        self.write(".gitignore", "node_modules/\n")
+        self.write(".claude/replicable-harness.json", '{"test": "make test"}')
+        self.run_scaffold("--apply")
+        res = subprocess.run([sys.executable, str(PLUGIN / "harness" / "wiki.py"), "--root", str(self.root),
+                              "check", "--strict"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stdout)
+        claude = (self.root / "CLAUDE.md").read_text()
+        self.assertTrue(claude.startswith("# My project\n\nOwn rules.\n\n<!-- replicable-harness:wiki v1 -->"))
+        self.assertIn("## Project wiki", claude)
+        self.assertEqual((self.root / ".gitignore").read_text().count("wiki/.obsidian/workspace*.json"), 1)
+        self.assertTrue((self.root / "wiki" / "raw" / ".gitkeep").exists())
+        config = json.loads((self.root / ".claude" / "replicable-harness.json").read_text())
+        self.assertEqual(config, {"test": "make test", "harness_version": project.plugin_version()})
+        self.assertEqual(json.loads((self.root / "wiki" / ".obsidian" / "app.json").read_text()), scaffold.OBSIDIAN)
+        workflow = (self.root / ".github" / "workflows" / "wiki.yml").read_text()
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn('--base "origin/$BASE"', workflow)  # the base ref goes through env, never into the script
+        self.assertIn("https://github.com/replicablelabs/replicable-claude.git", workflow)
+        self.assertIn("everything is up to date", self.run_scaffold())
+
+    def test_upgrade_replaces_only_managed_content(self):
+        self.write("CLAUDE.md", "# P\n\n<!-- replicable-harness:wiki v0 -->\nold rules\n<!-- /replicable-harness:wiki -->\n\nAfter.\n")
+        self.write("wiki/overview.md", "my own overview\n")
+        self.write("wiki/raw/2026-01-01-note.md", "raw\n")
+        self.write("wiki/.obsidian/app.json", '{"vimMode": true, "useMarkdownLinks": false}')
+        self.write(".github/workflows/wiki.yml", "old\n")
+        self.write(".claude/replicable-harness.json", '{"harness_version": "0.0.1"}')
+        out = self.run_scaffold("--apply")
+        self.assertIn("0.0.1 -> " + project.plugin_version(), out)
+        claude = (self.root / "CLAUDE.md").read_text()
+        self.assertNotIn("old rules", claude)
+        self.assertIn("v1 -->", claude)
+        self.assertTrue(claude.endswith("<!-- /replicable-harness:wiki -->\n\nAfter.\n"))
+        self.assertEqual((self.root / "wiki" / "overview.md").read_text(), "my own overview\n")
+        self.assertEqual((self.root / "wiki" / "raw" / "2026-01-01-note.md").read_text(), "raw\n")
+        self.assertEqual(json.loads((self.root / "wiki" / ".obsidian" / "app.json").read_text()),
+                         dict(scaffold.OBSIDIAN, vimMode=True))
+        self.assertIn("fetch-depth: 0", (self.root / ".github" / "workflows" / "wiki.yml").read_text())
+
+    def test_migrations_run_in_order_for_versions_skipped(self):
+        ran = []
+
+        def step(version):
+            def migrate(root, changes):
+                ran.append(version)
+                return []
+            return migrate
+
+        self.write(".claude/replicable-harness.json", '{"harness_version": "0.0.1"}')
+        current = project.plugin_version()
+        with patch.dict(scaffold.MIGRATIONS, {"0.0.10": step("0.0.10"), "0.0.2": step("0.0.2"),
+                                              "0.0.1": step("0.0.1"), "99.0.0": step("99.0.0")}):
+            scaffold.plan(self.root)
+        self.assertEqual(ran, ["0.0.2", "0.0.10"])  # numeric order; neither the current nor future versions
+        self.write(".claude/replicable-harness.json", '{"harness_version": "99.0.0"}')
+        with self.assertRaises(SystemExit) as raised:
+            scaffold.plan(self.root)
+        self.assertIn(f"newer than the installed plugin ({current})", str(raised.exception))
+
+    def test_proxy_is_reported_never_written_and_committed_settings_warn(self):
+        self.assertIn("inference proxy: not configured", self.run_scaffold())
+        out = self.run_scaffold(ANTHROPIC_BASE_URL="https://proxy.example.com/v1?key=hidden")
+        self.assertIn("inference proxy: configured (proxy.example.com, from environment)", out)
+        self.assertNotIn("hidden", out)
+        self.write(".claude/settings.json", '{"env": {"ANTHROPIC_BASE_URL": "https://p", "ANTHROPIC_API_KEY": "sk-x"}}')
+        out = self.run_scaffold("--apply")
+        self.assertIn("WARNING: .claude/settings.json (committed) sets ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY", out)
+        self.assertNotIn("sk-x", out)
+        for path in self.root.rglob("*"):
+            if path.is_file() and path.name != "settings.json":
+                self.assertNotIn("ANTHROPIC_BASE_URL=", path.read_text())
+
+    def test_harness_info_lists_the_wiki_scripts_and_versions(self):
+        info = project.info(self.root)
+        self.assertTrue(info["scripts"]["wiki"].endswith("harness/wiki.py"))
+        self.assertTrue(Path(info["scripts"]["scaffold"]).exists())
+        self.assertEqual(info["harness_version"], {"project": None, "plugin": project.plugin_version()})
+
+
 if __name__ == "__main__":
     unittest.main()

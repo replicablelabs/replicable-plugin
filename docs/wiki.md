@@ -233,20 +233,25 @@ save a reminder, which the SessionStart hook above already covers.
 ## Setup and upgrades
 
 `/replicable-harness:setup` creates or upgrades, after showing a diff and
-asking:
+asking. It runs `harness/scaffold.py`, which prints the plan and diffs by
+default and writes only with `--apply`:
 
-- the `wiki/` skeleton: `index.md`, `log.md`, `overview.md`, the folders and
-  `.obsidian/app.json`
-- a schema section in `CLAUDE.md` between markers:
-  `<!-- replicable-harness:wiki v1 -->` … `<!-- /replicable-harness:wiki -->`
-- `.gitignore` entries (Obsidian's personal files, `graphify-out/cache/`)
-- `harness_version` in `.claude/replicable-harness.json`
+| File | Created | On upgrade |
+| --- | --- | --- |
+| `wiki/` skeleton: `overview.md`, `log.md`, `index.md`, `decisions/`, `domain/`, `raw/` (each folder with a `.gitkeep`) | When missing | Never touched |
+| `wiki/.obsidian/app.json` | When missing | The three link keys are set; any other keys Obsidian wrote are kept |
+| `CLAUDE.md` schema section between `<!-- replicable-harness:wiki v1 -->` and `<!-- /replicable-harness:wiki -->` (template: `harness/templates/claude-wiki-section.md`) | Appended, or a new `CLAUDE.md` | Content between the markers replaced |
+| `.gitignore` block between `# replicable-harness (managed)` and `# /replicable-harness` (Obsidian's personal files, `graphify-out/cache/`) | Appended | Block replaced |
+| `.github/workflows/wiki.yml` (see [CI](#ci)) | Yes | Replaced: the plugin owns it |
+| `harness_version` in `.claude/replicable-harness.json` | Yes | Set to the plugin's version; other keys kept |
 
-Upgrades compare the repository's `harness_version` with the plugin's.
-They **only replace content between the plugin's markers and files the plugin
-owns** (templates, `.obsidian/app.json`). They never modify wiki pages or
-`raw/`. Each version lists its migrations, so a repository several versions
-behind upgrades in steps.
+Upgrades compare the repository's `harness_version` with the plugin's
+version (`.claude-plugin/plugin.json`), and refuse when the repository is
+newer than the installed plugin. They **only replace content between the
+plugin's markers and files the plugin owns**. They never modify wiki pages or
+`raw/`. Version-specific steps go in `MIGRATIONS` in `scaffold.py` and run in
+version order for every version between the repository's and the plugin's,
+so a repository several versions behind upgrades in steps.
 
 ## Privacy and the inference proxy
 
@@ -264,9 +269,12 @@ behind upgrades in steps.
 
 ## CI
 
-A project's CI runs the deterministic checks by checking out this plugin at
-the version in `harness_version` and running `wiki.py check --base
-<PR base>`. The history checks need full history, so the checkout uses
+A project's CI (`.github/workflows/wiki.yml`, installed by setup) runs the
+deterministic checks by cloning this plugin at the tag `v<harness_version>`
+and running `wiki.py check --base origin/<PR base>` on pull requests (`check`
+alone on pushes). Each plugin release therefore needs a matching `v` tag. The
+base branch name reaches the script through an environment variable, never
+interpolated into it. The history checks need full history, so the checkout uses
 `fetch-depth: 0`; on a shallow clone `check` warns and skips them.
 **Wiki changes need no human review:** they merge when the check
 passes. That makes the check the safety net, which is why a code change that
@@ -285,7 +293,7 @@ vault; `graphify-out/graph.html` serves the same purpose without Obsidian.
 ## Rollout
 
 1. CLI: `check`, `index`, `stale`, `new`, with tests. **Done:** `harness/wiki.py`
-2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades
+2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades. **Done:** `harness/scaffold.py`, run by the `setup` skill
 3. Skills: `wiki-ingest`, `wiki-lint`
 4. Hooks: staleness flag, stale-page reminder
 5. Trial on `replicable-labs`, then on other projects

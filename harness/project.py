@@ -72,6 +72,13 @@ def config(project: Optional[Path] = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def plugin_version() -> str:
+    try:
+        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        return "unknown"
+
+
 # -- graphify ------------------------------------------------------------------
 def graphify() -> Optional[str]:
     """Path to the graphify CLI, or None when it is not installed."""
@@ -161,5 +168,10 @@ def info(project: Optional[Path] = None) -> dict:
             "claude_integration": graphify_claude_integration(project),
             "install": GRAPHIFY_INSTALL,
         },
-        "scripts": {"headless_loop": str(PLUGIN_ROOT / "loops" / "headless_loop.py")},
+        "harness_version": {"project": config(project).get("harness_version"), "plugin": plugin_version()},
+        "scripts": {
+            "headless_loop": str(PLUGIN_ROOT / "loops" / "headless_loop.py"),
+            "wiki": str(PLUGIN_ROOT / "harness" / "wiki.py"),
+            "scaffold": str(PLUGIN_ROOT / "harness" / "scaffold.py"),
+        },
     }

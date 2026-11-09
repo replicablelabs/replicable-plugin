@@ -63,7 +63,7 @@ def handle(root: Path, msg: dict) -> Optional[dict]:
             result = {
                 "protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "harness", "version": "0.2.0"},
+                "serverInfo": {"name": "harness", "version": project.plugin_version()},
             }
         elif method == "ping":
             result = {}

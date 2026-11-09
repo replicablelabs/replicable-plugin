@@ -21,6 +21,7 @@ headless loop. It works in any git repository.
 | **Graph-first rules** | graphify | `graphify claude install` | A `## graphify` section in `CLAUDE.md`, plus PreToolUse guards on Grep, Read and Glob that steer Claude to the graph first |
 | **Context + verification** | this plugin | PostToolUse hook | After every edit: `graphify update`, then `graphify affected <file>`, then "can affect N symbols; tests to run: …" |
 | **Setup** | this plugin | SessionStart hook, `setup` skill | Builds the graph the first time (code only, no LLM), offers graphify's installer, and creates or upgrades the project wiki and its CI check |
+| **Wiki freshness** | this plugin | PostToolUse + SessionStart hooks | Editing code a wiki page describes names that page; pages left unupdated are listed at the next session start |
 | **Control flow** | this plugin | Stop hook (opt-in) | Claude can't end a turn while the tests are red. Bounded to 3 retries |
 | **Context isolation** | this plugin | `graph-explorer`, `reviewer` subagents | Graph-first exploration and independent review in their own context windows |
 | **Procedures** | this plugin | Skills | `setup`, `epcc` (Explore → Plan → Code → Commit), `tdd`, `test-gate`, `headless-loop`, `wiki-ingest`, `wiki-lint` |
@@ -168,7 +169,7 @@ without running it.
 
 - [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
 - [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of hooks (implemented and proposed), and hooks that call LLMs
-- [Project wiki](docs/wiki.md): a Karpathy-style intent wiki per project, maintained by Claude Code and readable in Obsidian (CLI, setup and skills implemented; hooks next)
+- [Project wiki](docs/wiki.md): a Karpathy-style intent wiki per project, maintained by Claude Code and readable in Obsidian (CLI, setup, skills and hooks implemented; trial next)
 
 ## Develop
 

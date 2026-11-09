@@ -102,7 +102,7 @@ safe. Background on loops and harness layers is in
 | 11 | Blast radius + affected tests | PostToolUse (Edit) | Re-index and report "affects X; run tests Y" | Code | Iterations ↓, regressions ↓ | ◐ P: `graphify update` + `graphify affected`; reports tests, does not run them |
 | 12 | Parse guard | PostToolUse (Edit) | "This file no longer parses" at the moment of the edit | Code | Iterations ↓ | ○ (removed with the `ast` indexer) |
 | 13 | Lint and type feedback | PostToolUse (Edit) | Format silently; report remaining lint and type errors only | — | Iterations ↓ | ○ |
-| 14 | Wiki staleness flag | PostToolUse (Edit) | Editing code a wiki page links to: "page Z may be outdated" | Wiki + Code | Wiki precision ↑ | ○ |
+| 14 | Wiki staleness flag | PostToolUse (Edit) | Editing code a wiki page links to: "page Z may be outdated"; flagged pages are repeated at the next SessionStart until updated | Wiki + Code | Wiki precision ↑ | ✅ P: `wiki_flag.py`, `wiki_reminder.py` |
 | 15 | Test gate + definition of done | Stop | Tests green (with a retry cap); also no debug prints, no skipped tests | — | False-done ↓ | ◐ P: tests only |
 | 16 | Coverage gate | Stop | Changed symbols with no covering test, according to the graph | Code | Escaped regressions ↓ | ○ |
 | 17 | Plan acceptance | Stop | The current node's check must pass; mark it done and unlock dependents | Plan | First-pass ↑, orchestration | ○ |

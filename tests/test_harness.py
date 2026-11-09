@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -503,6 +504,74 @@ class WikiTests(unittest.TestCase):
         for bad in ("---\nx: {a: 1}\n---\n", "---\n  - orphan\n---\n", "---\nx: 1\n", "---\nx: 1\nx: 2\n---\n"):
             with self.subTest(bad=bad), self.assertRaises(wiki.FrontmatterError):
                 wiki.parse_frontmatter(bad)
+
+
+class WikiHookTests(unittest.TestCase):
+    def setUp(self):
+        tmp, state = tempfile.TemporaryDirectory(), tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(state.cleanup)
+        self.root = Path(tmp.name).resolve()
+        for rel, body in WIKI_FIXTURE.items():
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(textwrap.dedent(body).lstrip())
+        self.state = Path(state.name)
+        self.env = env_for(self.root, HARNESS_DATA=state.name)
+
+    def hook(self, name, event):
+        res = subprocess.run([sys.executable, str(PLUGIN / "hooks" / name)],
+                             input=event if isinstance(event, str) else json.dumps(event),
+                             capture_output=True, text=True, env=self.env, timeout=30)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"] if res.stdout.strip() else None
+
+    def edit(self, rel):
+        return self.hook("wiki_flag.py", {"tool_name": "Edit", "tool_input": {"file_path": str(self.root / rel)}})
+
+    def test_editing_described_code_names_the_page_once(self):
+        out = self.edit("src/billing.py")
+        self.assertIn("wiki: src/billing.py is described by wiki/domain/invoices.md", out)
+        self.assertIn("wiki-ingest", out)
+        self.assertIsNone(self.edit("src/billing.py"))  # already flagged: no repeat
+        flags = json.loads((self.state / "wiki-flags.json").read_text())
+        self.assertEqual(flags["wiki/domain/invoices.md"]["files"], ["src/billing.py"])
+        self.assertFalse((self.root / ".state").exists())  # state stays out of the repository
+
+    def test_silent_for_uncovered_files_outside_projects_without_a_wiki_and_bad_input(self):
+        self.assertIsNone(self.edit("README.md"))
+        self.assertIsNone(self.hook("wiki_flag.py", {"tool_input": {"file_path": "/elsewhere/x.py"}}))
+        self.assertIsNone(self.hook("wiki_flag.py", "not json"))
+        self.assertIsNone(self.hook("wiki_reminder.py", "{}"))
+        shutil.rmtree(self.root / "wiki")
+        self.assertIsNone(self.edit("src/billing.py"))
+
+    def test_session_start_reminds_until_the_page_is_updated(self):
+        self.edit("src/billing.py")
+        out = self.hook("wiki_reminder.py", {"source": "startup"})
+        self.assertIn("1 page(s) may be out of date", out)
+        self.assertIn("- wiki/domain/invoices.md (src/billing.py)", out)
+        self.assertIn("/replicable-harness:wiki-lint", out)
+        self.edit("wiki/domain/invoices.md")  # editing the page clears its flag
+        self.assertIsNone(self.hook("wiki_reminder.py", {}))
+
+    def test_pages_changed_outside_claude_are_dropped(self):
+        self.edit("src/billing.py")
+        page = self.root / "wiki" / "domain" / "invoices.md"
+        later = time.time() + 60
+        os.utime(page, (later, later))
+        self.assertIsNone(self.hook("wiki_reminder.py", {}))
+        self.assertEqual(json.loads((self.state / "wiki-flags.json").read_text()), {})
+
+    def test_reminder_is_capped(self):
+        flags = {f"wiki/domain/p{i}.md": {"files": ["src/billing.py"], "since": 4e9} for i in range(7)}
+        for key in flags:
+            (self.root / key).write_text("x\n")
+        (self.state / "wiki-flags.json").write_text(json.dumps(flags))
+        out = self.hook("wiki_reminder.py", {})
+        self.assertIn("7 page(s)", out)
+        self.assertIn("- ... and 2 more", out)
+        self.assertLessEqual(len(out.splitlines()), 8)
 
 
 class WikiSkillTests(unittest.TestCase):

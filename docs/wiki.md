@@ -227,6 +227,12 @@ Checks:
 | Staleness flag | PostToolUse (Edit, Write) | When the edited file appears in some page's `code`, tells Claude which pages may now be wrong and suggests `wiki-ingest` before finishing. Also records them in the plugin's data directory |
 | Stale-page reminder | SessionStart | Lists pages flagged in earlier sessions and not yet updated (at most a few lines) |
 
+Flags live in the plugin's data directory (`wiki-flags.json`), never in the
+repository. Each edited file is reported once per page, not on every edit.
+A flag is cleared when Claude edits the page, and dropped when the page file
+changes after the flag was set (for example by a pull). Both hooks take about
+50 ms, call no LLM, and stay silent in projects without a `wiki/`.
+
 Learnings are captured through `wiki-ingest` (for example, `wiki-ingest
 session` before ending a session), not automatically at SessionEnd. By the
 time SessionEnd runs the model can no longer act, so a hook there could only
@@ -297,7 +303,7 @@ vault; `graphify-out/graph.html` serves the same purpose without Obsidian.
 1. CLI: `check`, `index`, `stale`, `new`, with tests. **Done:** `harness/wiki.py`
 2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades. **Done:** `harness/scaffold.py`, run by the `setup` skill
 3. Skills: `wiki-ingest`, `wiki-lint`. **Done:** `skills/wiki-ingest`, `skills/wiki-lint`
-4. Hooks: staleness flag, stale-page reminder
+4. Hooks: staleness flag, stale-page reminder. **Done:** `hooks/wiki_flag.py`, `hooks/wiki_reminder.py`
 5. Trial on `replicable-labs`, then on other projects
 
 ## Decisions

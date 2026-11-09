@@ -24,9 +24,9 @@ disable-model-invocation: true
 6. Optionally offer `graphify hook install` (rebuilds the graph on commit and
    checkout).
 7. Wiki and upgrades: run `python3 <scripts.scaffold>` (a dry run: it writes
-   nothing). It prints whether an inference proxy is configured, then each
-   planned change with a diff. Relay the proxy line and any WARNING verbatim;
-   never write proxy settings or credentials yourself. Summarise the changes
+   nothing). It prints each planned change with a diff, after any WARNING
+   about credentials in committed settings files; relay those warnings
+   verbatim and never write credentials yourself. Summarise the changes
    (create/update, one line each; show a diff only for files that already
    exist, such as `CLAUDE.md` and `.gitignore`). **Ask before applying**, then
    run it again with `--apply`, and run `python3 <scripts.wiki> check`.

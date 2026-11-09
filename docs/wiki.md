@@ -253,19 +253,19 @@ plugin's markers and files the plugin owns**. They never modify wiki pages or
 version order for every version between the repository's and the plugin's,
 so a repository several versions behind upgrades in steps.
 
-## Privacy and the inference proxy
+## Who runs the model, and privacy
 
-- Claude Code runs through the organisation's inference proxy, configured in
-  user or managed settings (`ANTHROPIC_BASE_URL` and credentials). **Never in a
-  committed file.** Setup checks that a proxy is configured and says so; it
-  never writes the setting.
-- Maintaining the wiki therefore sends nothing anywhere Claude Code doesn't
-  already send it.
+- Each developer's own Claude Code, signed in with their own subscription,
+  maintains the wiki through this plugin. The plugin has no model access of
+  its own: its CLI, hooks and CI are deterministic and call no LLM.
+- Maintaining the wiki therefore sends nothing anywhere the developer's Claude
+  Code doesn't already send it.
+- Credentials never go in committed files. Setup warns when the project's
+  `.claude/settings.json` or `.mcp.json` sets `ANTHROPIC_API_KEY` or
+  `ANTHROPIC_AUTH_TOKEN`, without printing the value.
 - graphify stays code-only by default. Its LLM steps (community names, document
-  extraction) are optional and, if used, must run through the same proxy with
-  an explicit `--backend` (`claude` with `ANTHROPIC_BASE_URL`, or `openai` with
-  `OPENAI_BASE_URL`), never `claude-cli`, and with no other provider keys in
-  the environment.
+  extraction) are optional and send content to whichever backend graphify is
+  configured with; run them only deliberately, never from a hook.
 
 ## CI
 

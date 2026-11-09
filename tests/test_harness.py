@@ -491,10 +491,7 @@ class ScaffoldTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
-        home = tempfile.TemporaryDirectory()  # no user settings leak into the proxy report
-        self.addCleanup(home.cleanup)
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}
-        self.env["HOME"] = home.name
+        self.env = dict(os.environ)
 
     def write(self, rel, text):
         path = self.root / rel
@@ -575,18 +572,12 @@ class ScaffoldTests(unittest.TestCase):
             scaffold.plan(self.root)
         self.assertIn(f"newer than the installed plugin ({current})", str(raised.exception))
 
-    def test_proxy_is_reported_never_written_and_committed_settings_warn(self):
-        self.assertIn("inference proxy: not configured", self.run_scaffold())
-        out = self.run_scaffold(ANTHROPIC_BASE_URL="https://proxy.example.com/v1?key=hidden")
-        self.assertIn("inference proxy: configured (proxy.example.com, from environment)", out)
-        self.assertNotIn("hidden", out)
-        self.write(".claude/settings.json", '{"env": {"ANTHROPIC_BASE_URL": "https://p", "ANTHROPIC_API_KEY": "sk-x"}}')
-        out = self.run_scaffold("--apply")
-        self.assertIn("WARNING: .claude/settings.json (committed) sets ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY", out)
+    def test_committed_credentials_warn_without_printing_them(self):
+        self.assertNotIn("WARNING", self.run_scaffold())
+        self.write(".claude/settings.json", '{"env": {"ANTHROPIC_API_KEY": "sk-x", "OTHER": "1"}}')
+        out = self.run_scaffold()
+        self.assertIn("WARNING: .claude/settings.json is committed with the project and sets ANTHROPIC_API_KEY.", out)
         self.assertNotIn("sk-x", out)
-        for path in self.root.rglob("*"):
-            if path.is_file() and path.name != "settings.json":
-                self.assertNotIn("ANTHROPIC_BASE_URL=", path.read_text())
 
     def test_harness_info_lists_the_wiki_scripts_and_versions(self):
         info = project.info(self.root)

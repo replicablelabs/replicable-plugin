@@ -16,8 +16,8 @@ What it manages in the project:
 
 Upgrades never touch wiki pages or ``raw/``. Version-specific steps go in
 ``MIGRATIONS`` and run in order, so a repository several versions behind
-upgrades in steps. It also reports whether an inference proxy is configured,
-and never writes that setting.
+upgrades in steps. It also warns when a committed settings file holds
+Anthropic credentials.
 """
 
 from __future__ import annotations
@@ -26,13 +26,11 @@ import argparse
 import datetime as dt
 import difflib
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import project  # noqa: E402
@@ -45,9 +43,7 @@ SECTION_RE = re.compile(r"<!-- replicable-harness:wiki v\d+ -->\n.*?<!-- /replic
 GITIGNORE_START, GITIGNORE_END = "# replicable-harness (managed)", "# /replicable-harness"
 GITIGNORE_LINES = ["wiki/.obsidian/workspace*.json", "graphify-out/cache/"]
 OBSIDIAN = {"useMarkdownLinks": True, "newLinkFormat": "relative", "alwaysUpdateLinks": True}
-PROXY_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-MANAGED_SETTINGS = (Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
-                    Path("/etc/claude-code/managed-settings.json"))
+CREDENTIAL_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # version -> step run when a repository upgrades past that version. A step gets the
 # project root and the planned changes so far, and returns extra changes. None yet:
@@ -183,7 +179,7 @@ def apply(root: Path, changes: List[Change]) -> None:
         path.write_text(change.new, encoding="utf-8")
 
 
-# -- inference proxy (reported, never written) ----------------------------------------------
+# -- credentials (each developer's Claude Code signs in on its own; never commit them) ---------
 def _settings_env(path: Path) -> dict:
     try:
         env = json.loads(path.read_text()).get("env", {})
@@ -192,23 +188,13 @@ def _settings_env(path: Path) -> dict:
     return env if isinstance(env, dict) else {}
 
 
-def proxy_report(root: Path) -> List[str]:
+def credential_warnings(root: Path) -> List[str]:
     lines = []
     for rel in (".claude/settings.json", ".mcp.json"):
-        committed = [k for k in PROXY_KEYS if k in _settings_env(root / rel)]
+        committed = [k for k in CREDENTIAL_KEYS if k in _settings_env(root / rel)]
         if committed:
-            lines.append(f"WARNING: {rel} (committed) sets {', '.join(committed)}. Move it to user or managed "
-                         "settings; inference settings and credentials never belong in the repository.")
-    sources = [("environment", dict(os.environ))]
-    sources += [(str(p), _settings_env(p)) for p in (*MANAGED_SETTINGS, Path.home() / ".claude" / "settings.json")]
-    for where, env in sources:
-        if env.get("ANTHROPIC_BASE_URL"):
-            host = urlparse(str(env["ANTHROPIC_BASE_URL"])).hostname or "?"
-            lines.append(f"inference proxy: configured ({host}, from {where})")
-            break
-    else:
-        lines.append("inference proxy: not configured (no ANTHROPIC_BASE_URL in the environment, managed or user "
-                     "settings). If your organisation requires one, set it there, not in the repository.")
+            lines.append(f"WARNING: {rel} is committed with the project and sets {', '.join(committed)}. "
+                         "Remove it: credentials never belong in the repository.")
     return lines
 
 
@@ -219,7 +205,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     root = (args.root or project.root()).resolve()
     changes, current, version = plan(root)
-    for line in proxy_report(root):
+    for line in credential_warnings(root):
         print(line)
     if not changes:
         print(f"replicable-harness {version}: everything is up to date")

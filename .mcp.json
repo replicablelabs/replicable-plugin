@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "code-graph": {
+    "harness": {
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/graph/mcp_server.py"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/harness/mcp_server.py"]
     }
   }
 }

@@ -8,13 +8,10 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PLUGIN_ROOT / "graph"))
-import indexer  # noqa: E402
-import mcp_server  # noqa: E402
+sys.path.insert(0, str(PLUGIN_ROOT / "harness"))
 import project  # noqa: E402
 
 ROOT = project.root()
-GRAPH = indexer.default_out(ROOT)
 STATE = project.data_dir(ROOT)
 
 
@@ -29,16 +26,8 @@ def emit(payload: dict) -> None:
     sys.stdout.write(json.dumps(payload))
 
 
-def load_graph() -> "mcp_server.CodeGraph":
-    graph = mcp_server.CodeGraph(GRAPH, ROOT)
-    graph.ensure_fresh()
-    return graph
-
-
-def rebuild() -> dict:
-    graph = indexer.build_graph(ROOT)
-    indexer.write_graph(graph, GRAPH)
-    return graph
+def context(event: str, text: str) -> None:
+    emit({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}})
 
 
 def env_flag(name: str) -> bool:

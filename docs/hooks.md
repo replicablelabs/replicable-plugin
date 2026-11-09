@@ -85,25 +85,25 @@ safe. Background on loops and harness layers is in
 
 **Code** = code graph · **Wiki** = code wiki · **Plan** = feature planning graph
 (see [harness-engineering.md](harness-engineering.md#three-graphs-that-feed-the-harness)).
-**Status:** ✅ implemented in this plugin · ◐ partly implemented · ○ proposed
+**Status:** ✅ implemented · ◐ partly implemented · ○ proposed. **G** = provided by graphify's own Claude Code integration or CLI (`graphify claude install`), **P** = provided by this plugin
 
 | # | Hook | Event | What it does | Graph | Main metrics | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Repo map | SessionStart | Compact module map and hot spots | Code | Tokens ↓, first-pass ↑ | ✅ |
-| 2 | Wiki index | SessionStart | Load only the wiki's index page | Wiki | Tokens ↓, context ↓ | ○ |
+| 1 | Repo map | SessionStart | Compact module map and hot spots | Code | Tokens ↓, first-pass ↑ | ◐ G: `CLAUDE.md` rules point to `GRAPH_REPORT.md` and `graphify query`; no SessionStart injection |
+| 2 | Wiki index | SessionStart | Load only the wiki's index page | Wiki | Tokens ↓, context ↓ | ◐ G: `graphify export wiki`, and graphify's rules say to use `graphify-out/wiki/index.md` when it exists |
 | 3 | Plan restore | SessionStart (compact, resume) | Re-inject the current plan node, its status and its acceptance check | Plan | Survives compaction | ○ |
 | 4 | Prompt enrichment | UserPromptSubmit | Symbols named in the prompt bring their graph summary, linked wiki pages and affected tests | Code + Wiki | Tokens ↓, first-pass ↑ | ○ |
 | 5 | Plan binding | UserPromptSubmit | Tie the prompt to a plan node, or ask for one | Plan | Interventions ↓, rework ↓ | ○ |
-| 6 | Read guard | PreToolUse (Read, Grep) | Deny generated, lock and huge files; point to `symbol` or a line range | Code | Tokens ↓, context ↓ | ○ |
-| 7 | Impact-first | PreToolUse (Edit) | Editing a high fan-in symbol requires an `impact` check first | Code | Escaped regressions ↓ | ○ |
+| 6 | Read guard | PreToolUse (Read, Grep) | Steer searches and reads to the graph; deny generated, lock and huge files | Code | Tokens ↓, context ↓ | ◐ G: PreToolUse guards on Grep, Read and Glob steer to the graph first |
+| 7 | Impact-first | PreToolUse (Edit) | Editing a high fan-in symbol requires an `affected` check first | Code | Escaped regressions ↓ | ○ (graphify `affected` is the query it would use) |
 | 8 | Scope guard | PreToolUse (Edit) | Warn on edits outside the current plan node's files | Plan | Rework ↓, parallel conflicts ↓ | ○ |
 | 9 | Safety guard | PreToolUse (Bash) | Deny force-push, destructive commands and deploys | — | Safety | ○ |
 | 10 | Noise reducer | PreToolUse (Bash) | Rewrite test and build commands to quiet output with the tail only (`updatedInput`) | — | Tokens ↓ | ○ |
-| 11 | Blast radius + affected tests | PostToolUse (Edit) | Re-index and report "affects X; run tests Y" | Code | Iterations ↓, regressions ↓ | ◐ reports; does not run the tests |
-| 12 | Parse guard | PostToolUse (Edit) | "This file no longer parses" at the moment of the edit | Code | Iterations ↓ | ✅ |
+| 11 | Blast radius + affected tests | PostToolUse (Edit) | Re-index and report "affects X; run tests Y" | Code | Iterations ↓, regressions ↓ | ◐ P: `graphify update` + `graphify affected`; reports tests, does not run them |
+| 12 | Parse guard | PostToolUse (Edit) | "This file no longer parses" at the moment of the edit | Code | Iterations ↓ | ○ (removed with the `ast` indexer) |
 | 13 | Lint and type feedback | PostToolUse (Edit) | Format silently; report remaining lint and type errors only | — | Iterations ↓ | ○ |
 | 14 | Wiki staleness flag | PostToolUse (Edit) | Editing code a wiki page links to: "page Z may be outdated" | Wiki + Code | Wiki precision ↑ | ○ |
-| 15 | Test gate + definition of done | Stop | Tests green (with a retry cap); also no debug prints, no skipped tests | — | False-done ↓ | ◐ tests only |
+| 15 | Test gate + definition of done | Stop | Tests green (with a retry cap); also no debug prints, no skipped tests | — | False-done ↓ | ◐ P: tests only |
 | 16 | Coverage gate | Stop | Changed symbols with no covering test, according to the graph | Code | Escaped regressions ↓ | ○ |
 | 17 | Plan acceptance | Stop | The current node's check must pass; mark it done and unlock dependents | Plan | First-pass ↑, orchestration | ○ |
 | 18 | Subagent contract | SubagentStop | Enforce output format, evidence and size | — | Context ↓ | ○ |
@@ -112,7 +112,7 @@ safe. Background on loops and harness layers is in
 | 21 | Metrics + learnings | SessionEnd | Log metrics; suggest a wiki or `CLAUDE.md` entry for traps found | Wiki | Makes everything above measurable | ○ |
 
 What each graph contributes:
-- **Code graph:** what a change touches. It makes edit → verify precise (1, 4, 6, 7, 11, 12, 16).
+- **Code graph (graphify):** what a change touches. It makes edit → verify precise (1, 4, 6, 7, 11, 12, 16).
 - **Wiki:** what a change must respect. Intent and constraints (2, 4, 14, 21).
 - **Plan graph:** what a change is for and when it is done. Scope, exit
   conditions and the order of work for orchestration (3, 5, 8, 17, 19).

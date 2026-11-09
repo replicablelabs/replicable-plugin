@@ -1,10 +1,20 @@
 {
   "name": "replicable-harness",
-  "version": "0.1.0",
-  "description": "Harness extensions for Claude Code: a code-graph MCP server, verification hooks, subagents, skills and agentic loops. Works in any repository.",
-  "author": { "name": "Replicable Labs", "url": "https://github.com/replicablelabs" },
+  "version": "0.2.0",
+  "description": "Harness extensions for Claude Code built on graphify's code graph: graph-aware verification hooks, a test gate, subagents, workflow skills and agentic loops. Works in any repository.",
+  "author": {
+    "name": "Replicable Labs",
+    "url": "https://github.com/replicablelabs"
+  },
   "homepage": "https://github.com/replicablelabs/replicable-claude",
   "repository": "https://github.com/replicablelabs/replicable-claude",
   "license": "MIT",
-  "keywords": ["code-graph", "mcp", "hooks", "agentic-loops", "verification", "tdd"]
+  "keywords": [
+    "graphify",
+    "code-graph",
+    "hooks",
+    "agentic-loops",
+    "verification",
+    "tdd"
+  ]
 }

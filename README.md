@@ -1,50 +1,57 @@
 # replicable-harness
 
-**A Claude Code plugin that adds context, verification and loops to the agent
-harness.** It adds a code-graph MCP server, hooks that make verification
-automatic, two focused subagents, workflow skills, and bounded agentic loops.
-It works in any git repository and has no dependencies beyond Python 3.9+.
+**A Claude Code plugin that adds verification and loops to the agent harness,
+built on [graphify](https://github.com/Graphify-Labs/graphify)'s code graph.**
+Graphify builds and queries the graph; this plugin adds what graphify doesn't:
+automatic re-indexing with a blast-radius report after every edit, a test
+gate the agent can't skip, focused subagents, workflow skills, and a bounded
+headless loop. It works in any git repository.
 
 > An agent is only as good as its feedback loop. Regressions, slow iteration
 > and "done" claims that aren't true usually mean the agent cannot cheaply see
 > what its change affects, or nothing makes it check. This plugin fixes both
 > in the harness, so the agent doesn't have to remember to do it.
 
-## What it adds
+## Who does what
 
-| Harness layer | Component | What it does |
-| --- | --- | --- |
-| **Tools** | `code-graph` MCP server | A static graph of the repo: modules, classes, functions, with `imports`, `calls`, `inherits` and `defines` edges. Tools: `overview`, `search`, `symbol`, `callers`, `callees`, `impact`, `path`, `mermaid`, `drift`, `test_gate`, `harness_info`, `reindex` |
-| **Context** | SessionStart hook | Opens each session with a compact map of the repo |
-| **Context + verification** | PostToolUse hook | After every edit, re-indexes the graph and tells Claude what the change can affect and which tests to run |
-| **Control flow** | Stop hook (opt-in) | Claude can't end a turn while the tests are red. Bounded to 3 retries |
-| **Context isolation** | `graph-explorer`, `reviewer` subagents | Exploration and independent review run in their own context windows |
-| **Procedures** | Skills | `epcc` (Explore → Plan → Code → Commit), `tdd`, `graph-first`, `test-gate`, `graph-drift`, `map-codebase`, `headless-loop` |
-| **Orchestration** | Loops | `/loop` drift checks, a headless "Ralph" loop, a Workflow fan-out |
+| Harness layer | Provided by | Component | What it does |
+| --- | --- | --- | --- |
+| **Code graph** | graphify | `graphify update`, `graphify-out/graph.json` | A tree-sitter graph of ~40 languages: `calls`, `imports`, `inherits`, `references` and more, each tagged `EXTRACTED` or `INFERRED` |
+| **Queries** | graphify | `graphify query / explain / path / affected / god-nodes`, and `graphify-mcp` | Scoped answers instead of reading whole files |
+| **Graph-first rules** | graphify | `graphify claude install` | A `## graphify` section in `CLAUDE.md`, plus PreToolUse guards on Grep, Read and Glob that steer Claude to the graph first |
+| **Context + verification** | this plugin | PostToolUse hook | After every edit: `graphify update`, then `graphify affected <file>`, then "can affect N symbols; tests to run: …" |
+| **Setup** | this plugin | SessionStart hook, `setup` skill | Builds the graph the first time (code only, no LLM) and offers graphify's installer |
+| **Control flow** | this plugin | Stop hook (opt-in) | Claude can't end a turn while the tests are red. Bounded to 3 retries |
+| **Context isolation** | this plugin | `graph-explorer`, `reviewer` subagents | Graph-first exploration and independent review in their own context windows |
+| **Procedures** | this plugin | Skills | `setup`, `epcc` (Explore → Plan → Code → Commit), `tdd`, `test-gate`, `headless-loop` |
+| **Orchestration** | this plugin | Loops | A headless "Ralph" loop with an isolated worktree, caps and an objective definition of done |
 
 ```mermaid
 flowchart LR
   subgraph Claude Code session
-    A[Claude] -- tool calls --> MCP[code-graph MCP]
-    A -- Edit/Write --> H1[PostToolUse hook]
+    A[Claude] -- "Grep/Read/Glob" --> GG["graphify PreToolUse guards"]
+    A -- "graphify query / affected" --> GF[graphify CLI]
+    A -- Edit/Write --> H1[PostToolUse: update + affected]
     A -- end of turn --> H2[Stop hook: test gate]
   end
-  IDX[indexer] --> G[("graph.json (~/.cache, outside the repo)")]
-  H1 -- re-index + impact --> G
+  GF --> G[("graphify-out/graph.json")]
+  H1 -- "graphify update" --> G
   H1 -- "blast radius, tests to run" --> A
-  MCP -- reloads when changed --> G
   H2 -- "tests red: keep going (max 3)" --> A
   L1[headless_loop.py] -- "fresh claude -p per iteration, own worktree" --> A
 ```
 
-## Docs
-
-- [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
-- [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of 21 hooks (implemented and proposed), and hooks that call LLMs
-
 ## Install
 
-From inside Claude Code:
+**1. Install graphify** (it needs Python 3.10+; `uv` or `pipx` bring their own Python):
+
+```bash
+uv tool install "graphifyy[mcp]"     # or: pipx install graphifyy
+```
+
+The PyPI package is `graphifyy` (double y); the command is `graphify`.
+
+**2. Install the plugin** from inside Claude Code:
 
 ```
 /plugin marketplace add replicablelabs/replicable-claude
@@ -55,12 +62,16 @@ Or try it for a single session without installing:
 
 ```bash
 git clone https://github.com/replicablelabs/replicable-claude ~/replicable-claude
-cd your-project
-claude --plugin-dir ~/replicable-claude
+cd your-project && claude --plugin-dir ~/replicable-claude
 ```
 
-To have a whole team prompted to install it, commit this to your project's
-`.claude/settings.json`:
+**3. Set up each project** with `/replicable-harness:setup`. It shows the
+detected settings, runs graphify's own Claude Code installer once you approve
+(that writes to `CLAUDE.md` and `.claude/settings.json`), builds the graph and
+records the test command.
+
+To have a whole team prompted to install the plugin, commit this to the
+project's `.claude/settings.json`:
 
 ```json
 {
@@ -71,49 +82,48 @@ To have a whole team prompted to install it, commit this to your project's
 }
 ```
 
-Check that it loaded:
+## Privacy
 
-```bash
-claude plugin details replicable-harness      # ~700 tokens added to every session
-claude mcp list                               # plugin:replicable-harness:code-graph ✔
-```
+The plugin's hooks only run `graphify update`, which parses **code locally with
+tree-sitter and sends nothing to an LLM**. Graphify's *full* extraction (the
+`/graphify` skill or `graphify extract` without `--code-only`) sends documents,
+PDFs and images to an LLM backend. For closed-source projects, run only
+code-only commands unless you've decided that's acceptable.
 
 ## Configure (optional)
 
-Everything is detected automatically. To override it, commit
-`.claude/replicable-harness.json` in your project:
+The test command is detected automatically. To override it, commit
+`.claude/replicable-harness.json`:
 
 ```json
-{
-  "test": "pnpm test --filter=api",
-  "exclude": ["vendor/", "migrations/"]
-}
+{ "test": "pnpm test --filter=api" }
 ```
 
-| Key | Default |
-| --- | --- |
-| `test` | Detected in this order: `make test`, the `package.json` `test` script (npm/pnpm/yarn/bun), `go test ./...`, `cargo test`, pytest or unittest (using the project's `.venv` if present) |
-| `exclude` | Nothing excluded beyond `.gitignore` |
+Detection order: `make test`, the `package.json` `test` script (npm, pnpm,
+yarn or bun), `go test ./...`, `cargo test`, then pytest or unittest (using
+the project's `.venv` if present). To keep files out of the graph, use
+graphify's `.graphifyignore`.
 
-The plugin keeps its state (the graph, snapshots, gate markers, loop worktrees
-and progress notes) in `$XDG_CACHE_HOME/replicable-harness/<project>-<hash>/`
-(default `~/.cache/...`). It never writes into your repository. Ask Claude for
-`harness_info` to see the resolved paths and settings.
+The plugin's own state (test-gate markers, loop worktrees and progress notes)
+lives in `$XDG_CACHE_HOME/replicable-harness/<project>-<hash>/` (default
+`~/.cache/...`). The graph is graphify's, in `graphify-out/`. Ask Claude for
+`harness_info` to see the resolved settings.
 
-Environment overrides: `CODE_GRAPH_ROOT`, `CODE_GRAPH_DATA`, `LAB_TEST_CMD`,
-`LAB_TEST_GATE=1`, `LAB_TEST_GATE_MAX`.
+Environment overrides: `HARNESS_ROOT`, `HARNESS_DATA`, `GRAPHIFY_BIN`,
+`LAB_TEST_CMD`, `LAB_TEST_GATE=1`, `LAB_TEST_GATE_MAX`.
 
 ## Use
 
 Skills are namespaced, so type `/replicable-harness:` to list them.
 
-**Ask structural questions.** *"What breaks if I change `parse_config`, and
-which tests cover it?"* uses `impact`. *"How does the CLI reach the database
-layer?"* uses `path`. *"Draw the module map"* uses `mermaid`.
+**Ask structural questions.** Graphify's rules steer Claude to `graphify query
+"…"`, `graphify path A B` and `graphify explain X` before it greps or reads
+files.
 
-**Use the verification loop.** Make any edit and the PostToolUse hook adds the
-affected callers and tests to Claude's context. `/replicable-harness:test-gate
-on` keeps Claude working until the suite is green, up to 3 attempts.
+**Use the verification loop.** After any edit, the PostToolUse hook re-indexes
+the graph and adds the affected symbols and tests to Claude's context.
+`/replicable-harness:test-gate on` keeps Claude working until the suite is
+green, up to 3 attempts.
 
 **Recommended workflows:**
 - `/replicable-harness:epcc <task>`: explore, plan, code, commit. Start in
@@ -127,11 +137,10 @@ on` keeps Claude working until the suite is green, up to 3 attempts.
 
 | Loop | Use it to | How |
 | --- | --- | --- |
-| `/loop` | Watch the structure while you work | `/loop 15m /replicable-harness:graph-drift` reports new symbols, dependencies, import cycles and untested modules since the last check |
-| Routines | Run the same check in the cloud | `/schedule`, e.g. a nightly drift report |
 | Stop hook | Keep Claude working while the tests are red | `/replicable-harness:test-gate on` |
 | Headless "Ralph" loop | Work toward a long, well-specified goal | `/replicable-harness:headless-loop <goal>` (explains the command and asks before running) |
-| Workflow fan-out | Handle work too big for one context | `/replicable-harness:map-codebase`: one agent per module, an adversarial check, then a synthesised `ARCHITECTURE.md` |
+| Graph freshness | Keep the graph current outside Claude sessions | Graphify's `graphify hook install` (on commit and checkout) or `graphify watch` |
+| `/loop` and routines | Recurring checks | e.g. `/loop 30m run graphify god-nodes and tell me if the top hubs changed` |
 
 The headless loop starts a **fresh `claude -p` process each iteration**.
 Memory between iterations lives in a `PROGRESS.md` outside the repo and in one
@@ -139,37 +148,33 @@ checkpoint commit per iteration. **Done** means the tests pass *and* the agent
 printed `<promise>DONE</promise>`; a claim of done while the tests fail is sent
 back as feedback. **Guardrails:** an isolated worktree and branch
 (`loop/<name>`), a per-iteration `--max-budget-usd`, an iteration cap, and
-`acceptEdits` plus an allowlist (edits, the test command, git read commands
-and the graph tools; no network, no push). `--dry-run` prints the command
+`acceptEdits` plus an allowlist (edits, the test command, read-only git and
+graphify commands; no network, no push). `--dry-run` prints the command
 without running it.
 
 ## Limitations
 
-- **The graph reads Python only.** For code in other languages the graph tools
-  have nothing to say, but the hooks, test gate, subagents, skills and loops
-  work in any language. Support for more languages is the main item on the
-  roadmap.
-- **The analysis is static.** It misses dynamic dispatch, `getattr`,
-  callbacks and string imports. The `graph-first` skill tells Claude to
-  confirm "no callers" with one targeted grep.
-- **Type inference is flow-insensitive:** `x = Cls(); x.m()` within a function
-  is followed; types returned from other functions are not.
+- **The graph is graphify's.** Its precision, languages and the meaning of
+  `INFERRED` edges are graphify's; check its documentation.
+- **The blast radius is static.** Dynamic dispatch, reflection and string
+  imports can be missed. The `graph-explorer` agent confirms "no callers"
+  with one targeted grep.
+- **Re-indexing after an edit takes about 1 s** (graphify's incremental update,
+  measured on small repositories). Larger repositories will take longer.
 - **Hooks run locally with your permissions.** Read them before enabling the
   plugin, as you would for any plugin.
 
-## Roadmap
+## Docs
 
-- More languages for the graph, through tree-sitter or language-server data
-- Measured evaluations with `claude plugin eval`: the same tasks run with and
-  without the plugin (regressions, iterations to green, cost)
-- Graph-aware review that flags changed symbols with no covering test
+- [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
+- [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of hooks (implemented and proposed), and hooks that call LLMs
 
 ## Develop
 
 ```bash
-python3 -m unittest discover -s tests -v   # stdlib only, Python 3.9+
+python3 -m unittest discover -s tests -v   # graphify tests are skipped if it isn't installed
 claude plugin validate .
-claude --plugin-dir .                       # dogfood: the plugin indexes itself
+claude --plugin-dir .                       # dogfood
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for the rules this codebase follows.

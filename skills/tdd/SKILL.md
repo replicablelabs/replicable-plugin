@@ -8,9 +8,9 @@ argument-hint: <behaviour to implement>
 
 Behaviour: $ARGUMENTS
 
-1. Use `search`/`impact` on the code-graph to find where the behaviour lives
-   and which test module already covers it.
-2. Write tests for the expected behaviour (including edge cases). Do **not**
+1. Find where the behaviour lives and which tests cover it:
+   `graphify query "<behaviour>"`, then `graphify affected "<file>"`.
+2. Write tests for the expected behaviour, including edge cases. Do **not**
    write implementation code yet, not even stubs that make them pass.
 3. Run them and confirm they fail for the right reason. Show the failure.
 4. Commit the tests on their own (`test: ...`).

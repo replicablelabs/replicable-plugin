@@ -11,7 +11,7 @@
     {
       "name": "replicable-harness",
       "source": "./",
-      "description": "Code-graph MCP server, verification hooks, subagents, skills and agentic loops for Claude Code."
+      "description": "Graph-aware verification hooks (on graphify), a test gate, subagents, skills and agentic loops for Claude Code."
     }
   ]
 }

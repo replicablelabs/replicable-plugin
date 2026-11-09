@@ -1,24 +1,24 @@
-"""Where am I, where do I keep state, and how does this project verify itself?
+"""Where am I, where do I keep state, how does this project verify itself, and is graphify set up?
 
 Everything project-specific is resolved here so the rest of the plugin stays
-generic. Resolution order:
+generic.
 
 Project root
-    ``CODE_GRAPH_ROOT`` > ``CLAUDE_PROJECT_DIR`` (set by Claude Code) >
+    ``HARNESS_ROOT`` > ``CLAUDE_PROJECT_DIR`` (set by Claude Code) >
     the git top-level of the current directory > the current directory.
 
-State directory (graph, snapshots, gate markers, loop worktrees)
-    ``CODE_GRAPH_DATA`` > ``$XDG_CACHE_HOME/replicable-harness/<project>-<hash>``
-    (default ``~/.cache/...``). State lives *outside* the repository, so the
-    plugin never adds files you have to gitignore.
+Plugin state (test-gate markers, loop worktrees, progress notes)
+    ``HARNESS_DATA`` > ``$XDG_CACHE_HOME/replicable-harness/<project>-<hash>``
+    (default ``~/.cache/...``), outside the repository.
+
+Code graph
+    Built and owned by graphify (https://github.com/Graphify-Labs/graphify) in
+    ``<root>/graphify-out/``. This plugin only calls graphify's CLI.
 
 Per-project configuration (optional, commit it with the project)
     ``<root>/.claude/replicable-harness.json``::
 
-        {
-          "test": "npm test",                 # verification command
-          "exclude": ["vendor/", "migrations/"]  # path prefixes not to index
-        }
+        { "test": "npm test" }
 
     Without it the test command is detected from the project's files.
 """
@@ -36,10 +36,11 @@ from typing import List, Optional
 PLUGIN = "replicable-harness"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_NAME = f"{PLUGIN}.json"
+GRAPHIFY_INSTALL = 'uv tool install "graphifyy[mcp]"   # or: pipx install graphifyy'
 
 
 def root() -> Path:
-    for var in ("CODE_GRAPH_ROOT", "CLAUDE_PROJECT_DIR"):
+    for var in ("HARNESS_ROOT", "CLAUDE_PROJECT_DIR"):
         if os.environ.get(var):
             return Path(os.environ[var]).resolve()
     try:
@@ -52,16 +53,12 @@ def root() -> Path:
 
 
 def data_dir(project: Optional[Path] = None) -> Path:
-    if os.environ.get("CODE_GRAPH_DATA"):
-        return Path(os.environ["CODE_GRAPH_DATA"]).resolve()
+    if os.environ.get("HARNESS_DATA"):
+        return Path(os.environ["HARNESS_DATA"]).resolve()
     project = (project or root()).resolve()
     cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     digest = hashlib.sha1(str(project).encode()).hexdigest()[:10]
     return cache / PLUGIN / f"{project.name}-{digest}"
-
-
-def graph_path(project: Optional[Path] = None) -> Path:
-    return data_dir(project) / "graph.json"
 
 
 def config(project: Optional[Path] = None) -> dict:
@@ -75,10 +72,34 @@ def config(project: Optional[Path] = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def excludes(project: Optional[Path] = None) -> List[str]:
-    return [str(p).strip("/") + "/" for p in config(project).get("exclude", [])]
+# -- graphify ------------------------------------------------------------------
+def graphify() -> Optional[str]:
+    """Path to the graphify CLI, or None when it is not installed."""
+    return os.environ.get("GRAPHIFY_BIN") or shutil.which("graphify")
 
 
+def graph_file(project: Optional[Path] = None) -> Path:
+    return (project or root()) / "graphify-out" / "graph.json"
+
+
+def graphify_claude_integration(project: Optional[Path] = None) -> bool:
+    """True when `graphify claude install` has been run for this project."""
+    project = project or root()
+    settings = project / ".claude" / "settings.json"
+    claude_md = project / "CLAUDE.md"
+    has_hooks = settings.exists() and "graphify hook-guard" in settings.read_text(errors="ignore")
+    has_rules = claude_md.exists() and "## graphify" in claude_md.read_text(errors="ignore")
+    return has_hooks and has_rules
+
+
+def run_graphify(args: List[str], project: Optional[Path] = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    exe = graphify()
+    if not exe:
+        raise FileNotFoundError("graphify is not installed: " + GRAPHIFY_INSTALL)
+    return subprocess.run([exe, *args], cwd=project or root(), capture_output=True, text=True, timeout=timeout)
+
+
+# -- verification ----------------------------------------------------------------
 def _python(project: Path) -> str:
     for candidate in (project / ".venv" / "bin" / "python", project / "venv" / "bin" / "python"):
         if candidate.exists():
@@ -129,14 +150,16 @@ def info(project: Optional[Path] = None) -> dict:
         "plugin_root": str(PLUGIN_ROOT),
         "project_root": str(project),
         "data_dir": str(data_dir(project)),
-        "graph": str(graph_path(project)),
         "config_file": str(project / ".claude" / CONFIG_NAME),
         "config": config(project),
         "test_command": test_command(project),
         "test_gate": (data_dir(project) / "test-gate").exists() or os.environ.get("LAB_TEST_GATE", "") in {"1", "true", "on"},
-        "scripts": {
-            "headless_loop": str(PLUGIN_ROOT / "loops" / "headless_loop.py"),
-            "map_codebase_workflow": str(PLUGIN_ROOT / "loops" / "workflows" / "map_codebase.js"),
+        "graphify": {
+            "cli": graphify(),
+            "graph": str(graph_file(project)),
+            "graph_exists": graph_file(project).exists(),
+            "claude_integration": graphify_claude_integration(project),
+            "install": GRAPHIFY_INSTALL,
         },
-        "has_git": shutil.which("git") is not None,
+        "scripts": {"headless_loop": str(PLUGIN_ROOT / "loops" / "headless_loop.py")},
     }

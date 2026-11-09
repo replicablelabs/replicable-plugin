@@ -5,7 +5,7 @@ argument-hint: on | off | status
 disable-model-invocation: true
 ---
 
-Call the code-graph `test_gate` tool with `action` set to `$ARGUMENTS`
+Call the harness `test_gate` tool with `action` set to `$ARGUMENTS`
 (default `status`) and report its answer in one line. If it says no test
 command was found, tell the user to add `"test"` to
 `.claude/replicable-harness.json`.

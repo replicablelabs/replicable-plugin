@@ -1,7 +1,7 @@
 """Stop hook: a bounded "don't stop until the tests are green" loop.
 
 Opt-in so it never surprises you: enable with `/replicable-harness:test-gate on`
-(the code-graph `test_gate` tool) or by exporting LAB_TEST_GATE=1.
+(the harness `test_gate` tool) or by exporting LAB_TEST_GATE=1.
 
 The command comes from `.claude/replicable-harness.json` ("test"), else it is
 detected from the project (Makefile, package.json, go.mod, Cargo.toml, Python).
@@ -23,8 +23,10 @@ if not (marker.exists() or env_flag("LAB_TEST_GATE")):
 
 changed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, capture_output=True, text=True).stdout
 DOCS = (".md", ".mdx", ".rst", ".txt", ".png", ".jpg", ".svg")
-if not any(not line.rstrip().lower().endswith(DOCS) for line in changed.splitlines() if line.strip()):
-    raise SystemExit(0)  # nothing but docs changed: nothing to verify
+code_changes = [line for line in changed.splitlines()
+                if line.strip() and "graphify-out/" not in line and not line.rstrip().lower().endswith(DOCS)]
+if not code_changes:
+    raise SystemExit(0)  # only docs or graphify's own output changed: nothing to verify
 
 attempts_file = STATE / "test-gate.attempts"
 attempts = int(attempts_file.read_text() or 0) if attempts_file.exists() else 0
@@ -52,5 +54,5 @@ tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-40:])
 emit({
     "decision": "block",
     "reason": (f"test-gate (attempt {attempts + 1}/{limit}): `{command}` failed. "
-               f"Fix the cause (use code-graph `impact`/`symbol` to locate it), then stop again.\n\n{tail}"),
+               f"Fix the cause (`graphify affected <file>` shows what a change touches), then stop again.\n\n{tail}"),
 })

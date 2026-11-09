@@ -10,10 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        include:
+          - python: "3.9"    # plugin code alone; graphify tests are skipped
+            graphify: false
+          - python: "3.12"   # with graphify (needs Python 3.10+)
+            graphify: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - if: matrix.graphify
+        run: python -m pip install graphifyy
       - run: python -m unittest discover -s tests -v

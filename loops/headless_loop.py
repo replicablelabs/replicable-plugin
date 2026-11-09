@@ -30,14 +30,16 @@ import time
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PLUGIN_ROOT / "graph"))
+sys.path.insert(0, str(PLUGIN_ROOT / "harness"))
 import project  # noqa: E402
 
 PROMISE = "<promise>DONE</promise>"
 ALLOWED_TOOLS = [
     "Read", "Edit", "Write", "Glob", "Grep",
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
-    f"mcp__plugin_{project.PLUGIN}_code-graph",
+    "Bash(graphify query:*)", "Bash(graphify explain:*)", "Bash(graphify path:*)",
+    "Bash(graphify affected:*)", "Bash(graphify god-nodes:*)", "Bash(graphify update:*)",
+    f"mcp__plugin_{project.PLUGIN}_harness",
 ]
 
 PROMPT = """You are iteration {i} of {n} of an autonomous loop working toward this goal:
@@ -45,8 +47,8 @@ PROMPT = """You are iteration {i} of {n} of an autonomous loop working toward th
 GOAL: {goal}
 
 You start with no memory of earlier iterations. Read {progress} first; it is the
-only record of what earlier iterations did. Use the code-graph tools (overview,
-symbol, impact) to orient instead of reading whole files.
+only record of what earlier iterations did. Orient with graphify (`graphify query`,
+`graphify explain`, `graphify affected`) instead of reading whole files.
 
 This iteration:
 1. Pick the single most valuable next step toward the goal and do it.
@@ -89,7 +91,7 @@ def main(argv=None) -> int:
         raise SystemExit('No test command found. Set "test" in .claude/replicable-harness.json: '
                          "the loop needs an objective definition of done.")
     tree = make_worktree(root, args.name) if not args.dry_run else root
-    env = dict(os.environ, LAB_TEST_CMD=test_cmd, CODE_GRAPH_ROOT=str(tree))
+    env = dict(os.environ, LAB_TEST_CMD=test_cmd, HARNESS_ROOT=str(tree))
     if (tree / "src").is_dir():
         # Python editable installs point at the main checkout; make the worktree's code win.
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(tree / "src"), os.environ.get("PYTHONPATH")]))

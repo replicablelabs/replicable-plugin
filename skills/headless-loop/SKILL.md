@@ -5,7 +5,7 @@ argument-hint: <goal>
 disable-model-invocation: true
 ---
 
-1. Call the code-graph `harness_info` tool. Note `scripts.headless_loop` and
+1. Call the harness `harness_info` tool. Note `scripts.headless_loop` and
    `test_command`. If `test_command` is null, stop: the loop needs an objective
    definition of done, so ask the user to set `"test"` in
    `.claude/replicable-harness.json`.

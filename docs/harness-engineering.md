@@ -65,11 +65,11 @@ Hooks act inside a run; outer loops act between runs.
 
 | Loop | Trigger | State | Done when | In this plugin |
 | --- | --- | --- | --- | --- |
-| `/loop` | A timer | The previous snapshot | Each tick reports | `/replicable-harness:graph-drift` |
+| `/loop` | A timer | Whatever the prompt reads | Each tick reports | Documented use (e.g. checking graphify's `god-nodes`) |
 | Routines (`/schedule`) | A cloud schedule | Repository and outputs | Each run reports | Documented use |
 | Stop-hook loop | The end of a turn | The transcript | Checks pass, or the retry cap is hit | `test_gate` |
 | Headless "Ralph" loop | The previous iteration ended | `PROGRESS.md` and git commits | Tests pass **and** the completion promise is printed | `loops/headless_loop.py` |
-| Workflow fan-out | One request | Structured results | The synthesis is written | `loops/workflows/map_codebase.js` |
+| Workflow fan-out | One request | Structured results | The synthesis is written | Not bundled (graphify's report and wiki export cover the architecture-document case) |
 
 ### Loop engineering
 
@@ -107,6 +107,9 @@ the graph points to**.
 - **Freshness:** derived from the code by a machine, so re-index on every edit.
   A stale graph is worse than none, because the agent trusts it.
 - **Value scales with size:** marginal on a small repository, essential on a large one.
+- **In this plugin** the graph is [graphify](https://github.com/Graphify-Labs/graphify)'s:
+  tree-sitter parsing of about 40 languages, edges tagged `EXTRACTED` or
+  `INFERRED`, queried with `graphify query`, `path`, `explain` and `affected`.
 - **Related approaches:** grep → tree-sitter repository maps → language servers
   (LSP) → a full graph.
 - **Limits:** static analysis misses dynamic dispatch, reflection and string

@@ -1,0 +1,17 @@
+{
+  "name": "replicablelabs",
+  "owner": {
+    "name": "Replicable Labs",
+    "url": "https://github.com/replicablelabs"
+  },
+  "metadata": {
+    "description": "Claude Code plugins from Replicable Labs."
+  },
+  "plugins": [
+    {
+      "name": "replicable-harness",
+      "source": "./",
+      "description": "Code-graph MCP server, verification hooks, subagents, skills and agentic loops for Claude Code."
+    }
+  ]
+}

@@ -13,7 +13,7 @@ project.
 - Validate the plugin: `claude plugin validate .`
 - Inventory and token cost: `claude --plugin-dir . plugin details replicable-harness`
 - Dogfood on this repo: `claude --plugin-dir .`
-- Project wiki CLI (design: `docs/wiki.md`): `python3 harness/wiki.py --root <project> check|index|stale|new`
+- Project wiki CLI (design: `docs/wiki.md`): `python3 harness/wiki.py --root <project> check|index|stale|covers|log|new`
 - Per-project setup and upgrades (dry run; `--apply` writes): `python3 harness/scaffold.py --root <project>`
 - Releases: bump `version` in `.claude-plugin/plugin.json` and tag `v<version>`; projects' wiki CI clones that tag
 

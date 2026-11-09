@@ -11,15 +11,15 @@ belongs to graphify; never copy it into the wiki.
   frontmatter: `type`, `summary` (at most 120 characters), `code` (repository
   paths it describes), `sources` (PRs, issues, commits, `raw/` files) and
   `updated` (YYYY-MM-DD). One topic per page, 50-150 lines.
-- **Tooling:** the wiki CLI is `scripts.wiki` in the harness `harness_info`
-  tool. Create pages with `new <type> "<title>"`, regenerate the index with
-  `index` (never edit `index.md` by hand), list outdated pages with `stale`,
-  and run `check` before finishing.
+- **Maintain:** use the `wiki-ingest` skill to record a PR, commits, a note
+  or this session's lessons, and `wiki-lint` to verify stale pages against
+  the code. Both use the wiki CLI (`scripts.wiki` in the harness
+  `harness_info` tool): `new`, `index` (never edit `index.md` by hand),
+  `covers`, `stale`, `log` and `check`, which must pass before you finish.
 - **Links:** relative Markdown links, `[Invoices](../domain/invoices.md)`,
   never `[[wikilinks]]`. Refer to code by inline path, `` `src/x.py` ``.
-- **Log:** append one entry per change to `log.md`:
-  `## [YYYY-MM-DD] <ingest|update|lint> | <subject>`, then `- ` lines naming
-  the pages touched.
+- **Log:** record each change in `log.md` with the CLI's `log` command
+  (`## [YYYY-MM-DD] <op> | <subject>`, then one `- ` line per page).
 - **Raw sources:** `raw/YYYY-MM-DD-short-title.md` files are immutable once
   committed; corrections go into pages. Check them for secrets and personal
   data before committing.

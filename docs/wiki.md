@@ -178,9 +178,9 @@ plain tools can parse:
 
 | Karpathy's operation | Here | Implemented as |
 | --- | --- | --- |
-| **Ingest** | Turn a source (a merged PR, a `raw/` note, the current session's lessons) into page updates, then append to `log.md` and regenerate `index.md` | `wiki-ingest` skill (uses judgement) + CLI (index, check) |
+| **Ingest** | Turn a source (a merged PR, a `raw/` note, the current session's lessons) into page updates, then append to `log.md` and regenerate `index.md` | `wiki-ingest` skill (uses judgement) + CLI (`covers`, `new`, `index`, `log`, `check`) |
 | **Query** | Read `index.md`, then only the pages needed; cite them | No new code: the schema section in `CLAUDE.md` tells agents to do this |
-| **Lint** | Find structural problems, then claims the code no longer supports | CLI `check` (deterministic), then the `wiki-lint` skill (judgement, using graphify) |
+| **Lint** | Find structural problems, then claims the code no longer supports | CLI `check` and `stale` (deterministic), then the `wiki-lint` skill (judgement, using graphify) |
 
 ## CLI
 
@@ -193,6 +193,8 @@ A standard-library Python script in the plugin, run as
 | `check [--strict] [--base <ref>]` | Runs every check below. Exit 1 on errors; warnings fail only with `--strict`. `--base` compares against a git ref (CI passes the PR's base) to catch code changes that left their pages untouched |
 | `index` | Regenerates `index.md` from frontmatter |
 | `stale` | Lists pages whose `code` changed after their `updated` date |
+| `covers <path>...` | Lists the pages whose `code` includes those paths (or a directory containing them) |
+| `log <op> <subject> [--line <text>...]` | Appends an entry to `log.md` (`op`: `ingest`, `update`, `lint` or `setup`) |
 | `new <type> <title> [--summary <text>] [--code <path>...]` | Creates a page from the template with valid frontmatter (a trap is appended to `traps.md` as a new section) and regenerates `index.md` |
 
 The CLI reads frontmatter with a small YAML subset (plain and quoted values,
@@ -294,7 +296,7 @@ vault; `graphify-out/graph.html` serves the same purpose without Obsidian.
 
 1. CLI: `check`, `index`, `stale`, `new`, with tests. **Done:** `harness/wiki.py`
 2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades. **Done:** `harness/scaffold.py`, run by the `setup` skill
-3. Skills: `wiki-ingest`, `wiki-lint`
+3. Skills: `wiki-ingest`, `wiki-lint`. **Done:** `skills/wiki-ingest`, `skills/wiki-lint`
 4. Hooks: staleness flag, stale-page reminder
 5. Trial on `replicable-labs`, then on other projects
 

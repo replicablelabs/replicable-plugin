@@ -1,6 +1,6 @@
 {
   "name": "replicable-harness",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Harness extensions for Claude Code built on graphify's code graph: graph-aware verification hooks, a test gate, subagents, workflow skills and agentic loops. Works in any repository.",
   "author": {
     "name": "Replicable Labs",

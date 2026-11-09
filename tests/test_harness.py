@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -471,6 +472,27 @@ class WikiTests(unittest.TestCase):
         self.assertEqual(self.cli("new", "overview", "My system", root=empty.name)[0], 0)
         self.assertIn("- [My system](overview.md): TODO", (Path(empty.name) / "wiki" / "index.md").read_text())
 
+    def test_covers_lists_pages_for_files_and_directories(self):
+        traps = self.root / "wiki" / "traps.md"
+        traps.write_text(traps.read_text().replace("updated:", "code: [src]\nupdated:"))
+        rc, out = self.cli("covers", "src/billing.py", str(self.root / "src" / "billing.py"), "/elsewhere/x.py",
+                           "README.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.splitlines(), ["wiki/domain/invoices.md: src/billing.py",
+                                            "wiki/traps.md: src/billing.py"])
+        self.assertEqual(self.cli("covers", "docs/x.md"), (0, ""))
+
+    def test_log_appends_a_parseable_entry(self):
+        rc, _ = self.cli("log", "ingest", "PR #7 refunds", "--line", "updated domain/invoices.md", "--line", "added x")
+        self.assertEqual(rc, 0)
+        text = (self.root / "wiki" / "log.md").read_text()
+        today = wiki.dt.date.today().isoformat()
+        self.assertTrue(text.endswith(f"- added domain/invoices.md\n\n## [{today}] ingest | PR #7 refunds\n"
+                                      "- updated domain/invoices.md\n- added x\n"), text)
+        self.assertNotEqual(self.cli("log", "ingest", "two\nlines")[0], 0)
+        self.assertNotEqual(self.cli("log", "rewrite", "x")[0], 0)
+        self.assertEqual(self.cli("check")[0], 0)
+
     def test_frontmatter_subset_round_trips(self):
         meta = {"type": "domain", "summary": "Has: a colon, and 'quotes'", "code": ["a/b.py", "c d"],
                 "sources": [], "updated": "2026-01-01", "superseded_by": None}
@@ -481,6 +503,31 @@ class WikiTests(unittest.TestCase):
         for bad in ("---\nx: {a: 1}\n---\n", "---\n  - orphan\n---\n", "---\nx: 1\n", "---\nx: 1\nx: 2\n---\n"):
             with self.subTest(bad=bad), self.assertRaises(wiki.FrontmatterError):
                 wiki.parse_frontmatter(bad)
+
+
+class WikiSkillTests(unittest.TestCase):
+    """The skills drive the CLI by name; keep them in step with it."""
+
+    SKILLS = ("wiki-ingest", "wiki-lint")
+
+    def test_skills_are_well_formed_and_only_use_existing_cli_commands(self):
+        commands = set(re.findall(r'add_parser\("(\w+)"', (PLUGIN / "harness" / "wiki.py").read_text()))
+        self.assertEqual(commands, {"check", "index", "stale", "covers", "log", "new"})
+        for name in self.SKILLS:
+            with self.subTest(skill=name):
+                text = (PLUGIN / "skills" / name / "SKILL.md").read_text()
+                meta, _ = wiki.parse_frontmatter(text)
+                self.assertEqual(meta["name"], name)
+                self.assertTrue(meta["description"])
+                used = set(re.findall(r"<scripts\.wiki> (\w+)", text.replace("\n", " ")))
+                self.assertTrue(used)
+                self.assertLessEqual(used, commands, used - commands)
+                self.assertIn("harness_info", text)
+
+    def test_claude_section_points_to_the_skills(self):
+        section = (PLUGIN / "harness" / "templates" / "claude-wiki-section.md").read_text()
+        for name in self.SKILLS:
+            self.assertIn(f"`{name}`", section)
 
 
 import scaffold  # noqa: E402

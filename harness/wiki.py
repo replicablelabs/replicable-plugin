@@ -4,6 +4,8 @@
     wiki.py [--root DIR] check [--strict] [--base REF]
     wiki.py [--root DIR] index
     wiki.py [--root DIR] stale
+    wiki.py [--root DIR] covers PATH...
+    wiki.py [--root DIR] log OP SUBJECT [--line TEXT ...]
     wiki.py [--root DIR] new TYPE TITLE [--summary TEXT] [--code PATH ...]
 
 The wiki lives in ``<root>/wiki``; the root defaults to the project root from
@@ -40,6 +42,7 @@ TYPES = {
 FIXED_FILES = {"overview": "overview.md", "trap": "traps.md"}
 STATUSES = ("proposed", "accepted", "superseded", "deprecated")
 GENERATED = {"index.md", "log.md"}
+LOG_OPS = ("ingest", "update", "lint", "setup")
 MAX_SUMMARY = 120
 MAX_LINES = 150
 
@@ -300,6 +303,25 @@ def stale_pages(wiki: Wiki) -> List[Tuple[Page, List[Tuple[str, str]]]]:
     return result
 
 
+def covered_by(wiki: Wiki, paths: Iterable[str]) -> List[Tuple[Page, List[str]]]:
+    """Pages whose `code` lists one of ``paths`` (or a directory containing it), with the paths matched."""
+    paths = [p.strip().rstrip("/").removeprefix("./") for p in paths]
+    result = []
+    for page in wiki.pages:
+        hits = sorted({f for f in paths for c in code_paths(page) if f == c or f.startswith(c + "/")})
+        if hits:
+            result.append((page, hits))
+    return result
+
+
+def append_log(wiki: Wiki, op: str, subject: str, lines: List[str]) -> Path:
+    path = wiki.dir / "log.md"
+    text = path.read_text(encoding="utf-8") if path.exists() else "# Log\n\nAppend-only record of wiki changes, newest last.\n"
+    entry = f"## [{dt.date.today().isoformat()}] {op} | {subject}\n" + "".join(f"- {line}\n" for line in lines)
+    path.write_text(text.rstrip("\n") + "\n\n" + entry, encoding="utf-8")
+    return path
+
+
 def code_paths(page: Page) -> List[str]:
     return [c.strip().rstrip("/").removeprefix("./")
             for c in as_list((page.meta or {}).get("code")) if isinstance(c, str) and c.strip()]
@@ -514,11 +536,8 @@ class Checker:
             return
         changed = set(git_lines(root, "diff", "--name-only", "--relative", merge_base) or [])
         changed |= set(git_lines(root, "ls-files", "--others", "--exclude-standard") or [])
-        for page in self.wiki.pages:
-            if f"{WIKI_DIR}/{page.rel}" in changed:
-                continue
-            hits = sorted(f for f in changed for c in code_paths(page) if f == c or f.startswith(c + "/"))
-            if hits:
+        for page, hits in covered_by(self.wiki, changed):
+            if f"{WIKI_DIR}/{page.rel}" not in changed:
                 self.add("error", page.rel, f"its code changed since {base} but the page did not: {', '.join(hits)} "
                                             "(update the page, or bump updated after checking it)")
 
@@ -586,6 +605,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     check.add_argument("--base", metavar="REF", help="also fail when code changed since REF without its pages")
     sub.add_parser("index", help="regenerate wiki/index.md from frontmatter")
     sub.add_parser("stale", help="list pages whose code changed after their updated date")
+    covers = sub.add_parser("covers", help="list the pages whose code includes these repository paths")
+    covers.add_argument("paths", nargs="+", metavar="PATH")
+    log = sub.add_parser("log", help="append an entry to wiki/log.md")
+    log.add_argument("op", choices=LOG_OPS)
+    log.add_argument("subject", help="what the change was about, e.g. 'PR #123 credit notes'")
+    log.add_argument("--line", action="append", default=[], metavar="TEXT",
+                     help="a detail line, e.g. 'updated domain/invoices.md' (repeatable)")
     new = sub.add_parser("new", help="create a page from its template")
     new.add_argument("type", choices=list(TYPES))
     new.add_argument("title")
@@ -602,6 +628,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if not wiki.dir.is_dir():
         print(f"no {WIKI_DIR}/ directory in {root}; nothing to do (create pages with `wiki.py new`)")
+        return 0
+    if args.command == "covers":
+        rel_paths = []
+        for raw in args.paths:
+            path = Path(raw)
+            if path.is_absolute():
+                try:
+                    raw = path.resolve().relative_to(root).as_posix()
+                except ValueError:
+                    continue  # outside the project: no page can cover it
+            rel_paths.append(raw)
+        for page, hits in covered_by(wiki, rel_paths):
+            print(f"{WIKI_DIR}/{page.rel}: {', '.join(hits)}")
+        return 0
+    if args.command == "log":
+        if "\n" in args.subject or any("\n" in line for line in args.line):
+            raise SystemExit("log subjects and lines are single lines")
+        print(f"appended to {append_log(wiki, args.op, args.subject, args.line).relative_to(root)}")
         return 0
     if args.command == "index":
         print(f"wrote {write_index(wiki).relative_to(root)}")

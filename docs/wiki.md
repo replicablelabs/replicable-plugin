@@ -1,0 +1,263 @@
+# Project wiki (design)
+
+> **Status: design, not implemented yet.** This page specifies what will be
+> built; [Rollout](#rollout) lists the order. Nothing described here exists in
+> the plugin until that section says so.
+
+Each project gets a wiki that **agents read first and humans can browse**,
+with Obsidian as the viewer and GitHub as a fallback. It follows the pattern
+in Andrej Karpathy's
+[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+immutable raw sources, LLM-maintained pages, and a schema that tells the LLM
+how to maintain them. Claude Code maintains the wiki, using this plugin's
+skills, hooks and CLI.
+
+## Two halves: structure and intent
+
+| | Structure: *what the code is* | Intent: *why, and what must hold* |
+| --- | --- | --- |
+| Owner | graphify | This wiki |
+| Content | Modules, calls, imports, communities, hubs | Decisions, domain rules, constraints, traps |
+| Produced by | Regenerated from the code (`graphify update`, `graphify export wiki`) | Maintained page by page by Claude Code, reviewed like code |
+| Location | `graphify-out/` | `wiki/` |
+
+The intent wiki never duplicates structure. It names the code it concerns
+(see [Frontmatter](#frontmatter)), and agents use graphify for everything
+structural.
+
+## Distribution and instances
+
+```
+replicable-claude (this plugin, installed once per developer)
+   skills, hooks, CLI, templates
+        │  /replicable-harness:setup  installs or upgrades
+        ▼
+each project repository (committed with the project)
+   CLAUDE.md                            graphify section + wiki schema section
+   .claude/settings.json                plugin enabled for the team + graphify's hooks
+   .claude/replicable-harness.json      test command, harness_version
+   wiki/                                this wiki
+   graphify-out/                        graphify's structure graph
+```
+
+Mechanisms live in the plugin; knowledge lives in the repository. A plugin
+update improves every project; each project's wiki stays with its code and its
+history.
+
+## Layout
+
+```
+wiki/
+  index.md          catalogue, generated from frontmatter (never hand-edited)
+  log.md            append-only record of wiki changes
+  overview.md       what the system is for, in one screen
+  decisions/        ADR-style records: 0001-postgres-over-mongo.md
+  domain/           rules that must hold: invoices.md
+  traps.md          known pitfalls, each with the symptom and the fix
+  raw/              immutable source notes (see Raw sources)
+  .obsidian/        shared Obsidian settings (personal ones gitignored)
+```
+
+### Page types
+
+| `type` | Folder | Holds | Extra fields |
+| --- | --- | --- | --- |
+| `overview` | `wiki/` | Purpose, users, the main flows, links to the other pages | — |
+| `decision` | `decisions/` | Context, decision, consequences, alternatives considered | `status`: `proposed`, `accepted`, `superseded` or `deprecated`; `superseded_by` |
+| `domain` | `domain/` | Rules the code must uphold, with examples and edge cases | — |
+| `trap` | `traps.md` (one section per trap) | Symptom, cause, fix, how to avoid it | — |
+
+## Frontmatter
+
+Every page except `index.md`, `log.md` and `raw/` starts with:
+
+```yaml
+---
+type: domain
+summary: Invoices are immutable once issued; corrections are credit notes.
+code:
+  - src/billing/invoice.ts
+  - src/billing/credit_note.ts
+sources:
+  - https://github.com/org/repo/pull/123
+  - raw/2026-11-03-billing-call.md
+updated: 2026-11-09
+tags: [billing]
+---
+```
+
+| Field | Required | Purpose |
+| --- | --- | --- |
+| `type` | Yes | One of the page types above |
+| `summary` | Yes, at most 120 characters | The line `index.md` shows. Agents decide from it whether to open the page |
+| `code` | Recommended | Repository paths the page describes. They connect the page to graphify's graph and make staleness checks possible |
+| `sources` | Recommended | PRs, issues, commits or `raw/` files the content came from |
+| `updated` | Yes | The date the content was last checked against its code and sources |
+| `tags` | No | For Obsidian's tag views; ignored elsewhere |
+
+Obsidian shows frontmatter as Properties; GitHub shows it as a table.
+
+## Obsidian and GitHub conventions
+
+One syntax that renders well in both:
+
+| Element | Convention |
+| --- | --- |
+| Links between pages | Relative Markdown links, `[Invoices](../domain/invoices.md)`. Obsidian counts them for backlinks and the graph view; GitHub renders them. **No `[[wikilinks]]`**: GitHub doesn't render them |
+| File names | `kebab-case.md`, no spaces. Decisions are numbered: `0007-short-title.md` |
+| Code references | Inline code paths, `` `src/billing/invoice.ts` ``. The vault is `wiki/`, so links to code would not resolve in Obsidian |
+| Callouts | `> [!NOTE]`, `> [!WARNING]` (rendered by both) |
+| Diagrams | Mermaid code blocks (rendered by both) |
+
+Open `wiki/` as the Obsidian vault. Setup commits a shared
+`wiki/.obsidian/app.json` so links created in Obsidian follow the conventions:
+
+```json
+{ "useMarkdownLinks": true, "newLinkFormat": "relative", "alwaysUpdateLinks": true }
+```
+
+and gitignores the personal files (`wiki/.obsidian/workspace*.json`). These
+setting names are to be confirmed against the current Obsidian version during
+implementation.
+
+## Raw sources
+
+| Source | Where it lives |
+| --- | --- |
+| Code and commits | Git. Never copied |
+| PRs and issues | GitHub. Linked from `sources`; `wiki-ingest` reads them with `gh` |
+| Anything that exists nowhere else: meeting notes, design discussions, decisions made in calls, pasted threads | `wiki/raw/`, committed |
+
+Rules for `wiki/raw/`:
+
+- **Immutable once committed.** Corrections go into wiki pages, never back into
+  raw, so every claim can be traced to an unaltered source.
+- **Text only**, named `YYYY-MM-DD-short-title.md`. Large binaries go to Git
+  LFS or stay external, linked from `sources`.
+- **Checked before committing.** Raw notes can contain personal data or
+  secrets, and git history keeps them. The CLI warns about likely secrets.
+
+## `index.md` and `log.md`
+
+`index.md` is **generated** by the CLI from frontmatter, grouped by type, one
+line per page:
+
+```markdown
+## Domain
+- [Invoices](domain/invoices.md): Invoices are immutable once issued; corrections are credit notes.
+```
+
+Generating it means it can't drift from the pages; the check fails if it is
+out of date.
+
+`log.md` is append-only, newest last, one entry per change, in a format that
+plain tools can parse:
+
+```markdown
+## [2026-11-09] ingest | PR #123 billing credit notes
+- updated domain/invoices.md, added decisions/0007-credit-notes.md
+```
+
+## Operations
+
+| Karpathy's operation | Here | Implemented as |
+| --- | --- | --- |
+| **Ingest** | Turn a source (a merged PR, a `raw/` note, the current session's lessons) into page updates, then append to `log.md` and regenerate `index.md` | `wiki-ingest` skill (uses judgement) + CLI (index, check) |
+| **Query** | Read `index.md`, then only the pages needed; cite them | No new code: the schema section in `CLAUDE.md` tells agents to do this |
+| **Lint** | Find structural problems, then claims the code no longer supports | CLI `check` (deterministic), then the `wiki-lint` skill (judgement, using graphify) |
+
+## CLI
+
+A standard-library Python script in the plugin, run as
+`python3 <plugin>/harness/wiki.py <command>`. Skills get the path from
+`harness_info`; hooks and CI call it directly.
+
+| Command | Does |
+| --- | --- |
+| `check [--strict]` | Runs every check below. Exit 1 on errors; warnings fail only with `--strict` |
+| `index` | Regenerates `index.md` from frontmatter |
+| `stale` | Lists pages whose `code` changed after their `updated` date |
+| `new <type> <title>` | Creates a page from the template with valid frontmatter |
+
+Checks:
+
+| Check | Level |
+| --- | --- |
+| Frontmatter present, valid, with the required fields | Error |
+| Relative links resolve | Error |
+| `[[wikilinks]]` used | Error |
+| Files listed in `code` exist | Error (the code moved or was deleted) |
+| `index.md` matches the frontmatter | Error |
+| A `raw/` file was modified after its first commit | Error |
+| File names follow the convention | Error |
+| Page is stale: `git log` shows a `code` file changed after `updated` | Warning |
+| Orphan page: no inbound links other than from the index | Warning |
+| Likely secret in `raw/` | Warning |
+| Superseded decision without `superseded_by` | Warning |
+
+## Hooks
+
+| Hook | Event | Does |
+| --- | --- | --- |
+| Staleness flag | PostToolUse (Edit, Write) | When the edited file appears in some page's `code`, tells Claude which pages may now be wrong and suggests `wiki-ingest` before finishing. Also records them in the plugin's data directory |
+| Stale-page reminder | SessionStart | Lists pages flagged in earlier sessions and not yet updated (at most a few lines) |
+
+Learnings are captured through `wiki-ingest` (for example, `wiki-ingest
+session` before ending a session), not automatically at SessionEnd. By the
+time SessionEnd runs the model can no longer act, so a hook there could only
+save a reminder, which the SessionStart hook above already covers.
+
+## Setup and upgrades
+
+`/replicable-harness:setup` creates or upgrades, after showing a diff and
+asking:
+
+- the `wiki/` skeleton: `index.md`, `log.md`, `overview.md`, the folders and
+  `.obsidian/app.json`
+- a schema section in `CLAUDE.md` between markers:
+  `<!-- replicable-harness:wiki v1 -->` … `<!-- /replicable-harness:wiki -->`
+- `.gitignore` entries (Obsidian's personal files, `graphify-out/cache/`)
+- `harness_version` in `.claude/replicable-harness.json`
+
+Upgrades compare the repository's `harness_version` with the plugin's.
+They **only replace content between the plugin's markers and files the plugin
+owns** (templates, `.obsidian/app.json`). They never modify wiki pages or
+`raw/`. Each version lists its migrations, so a repository several versions
+behind upgrades in steps.
+
+## Privacy and the inference proxy
+
+- Claude Code runs through the organisation's inference proxy, configured in
+  user or managed settings (`ANTHROPIC_BASE_URL` and credentials). **Never in a
+  committed file.** Setup checks that a proxy is configured and says so; it
+  never writes the setting.
+- Maintaining the wiki therefore sends nothing anywhere Claude Code doesn't
+  already send it.
+- graphify stays code-only by default. Its LLM steps (community names, document
+  extraction) are optional and, if used, must run through the same proxy with
+  an explicit `--backend` (`claude` with `ANTHROPIC_BASE_URL`, or `openai` with
+  `OPENAI_BASE_URL`), never `claude-cli`, and with no other provider keys in
+  the environment.
+
+## CI
+
+A project's CI can run the deterministic checks by checking out this plugin at
+the version in `harness_version` and running `wiki.py check`. Wiki changes are
+reviewed in pull requests like code.
+
+## Rollout
+
+1. CLI: `check`, `index`, `stale`, `new`, with tests
+2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades
+3. Skills: `wiki-ingest`, `wiki-lint`
+4. Hooks: staleness flag, stale-page reminder
+5. Trial on `replicable-labs`, then on other projects
+
+## Open questions
+
+- **Page size:** one page per rule or per area? Start per area and split when
+  a page passes about 150 lines.
+- **Review:** do wiki-only PRs need a human reviewer, or can they merge after
+  `check` passes?
+- **graphify's Obsidian export:** keep it as a separate local vault, or link
+  from `overview.md` to a committed copy?

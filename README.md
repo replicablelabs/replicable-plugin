@@ -168,6 +168,7 @@ without running it.
 
 - [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
 - [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of hooks (implemented and proposed), and hooks that call LLMs
+- [Project wiki (design)](docs/wiki.md): a Karpathy-style intent wiki per project, maintained by Claude Code and readable in Obsidian
 
 ## Develop
 

@@ -116,9 +116,25 @@ Open `wiki/` as the Obsidian vault. Setup commits a shared
 { "useMarkdownLinks": true, "newLinkFormat": "relative", "alwaysUpdateLinks": true }
 ```
 
-and gitignores the personal files (`wiki/.obsidian/workspace*.json`). These
-setting names are to be confirmed against the current Obsidian version during
-implementation.
+and gitignores the personal files (`wiki/.obsidian/workspace*.json`).
+
+| Key | Obsidian default | Here |
+| --- | --- | --- |
+| `useMarkdownLinks` | `false` (creates `[[wikilinks]]`) | `true`: create Markdown links |
+| `newLinkFormat` | `"shortest"` (other options: `"relative"`, `"absolute"`) | `"relative"`: paths relative to the current file, as GitHub needs |
+| `alwaysUpdateLinks` | `false` (asks first) | `true`: renaming a page updates links to it |
+
+Obsidian writes a key to `app.json` only once it differs from the default, so
+these three keys are the whole file. (Key names from a
+[community settings reference](https://faerimagic.github.io/faeri-obsidian-vaults/App-Store/Apps/Productivity/Obsidian/Obsidian-Settings);
+recheck in a real vault during implementation.)
+
+### Page size
+
+One page per topic (an area's rules, or one decision), 50–150 lines. Agents
+read a page in full, so large pages cost tokens on content that isn't needed,
+and very small pages mean many hops and an index too long to scan. `wiki
+check` warns above 150 lines.
 
 ## Raw sources
 
@@ -174,7 +190,7 @@ A standard-library Python script in the plugin, run as
 
 | Command | Does |
 | --- | --- |
-| `check [--strict]` | Runs every check below. Exit 1 on errors; warnings fail only with `--strict` |
+| `check [--strict] [--base <ref>]` | Runs every check below. Exit 1 on errors; warnings fail only with `--strict`. `--base` compares against a git ref (CI passes the PR's base) to catch code changes that left their pages untouched |
 | `index` | Regenerates `index.md` from frontmatter |
 | `stale` | Lists pages whose `code` changed after their `updated` date |
 | `new <type> <title>` | Creates a page from the template with valid frontmatter |
@@ -190,7 +206,9 @@ Checks:
 | `index.md` matches the frontmatter | Error |
 | A `raw/` file was modified after its first commit | Error |
 | File names follow the convention | Error |
+| A change set (for example a PR) modifies a page's `code` files without touching the page | Error in CI (`check --base <ref>`) |
 | Page is stale: `git log` shows a `code` file changed after `updated` | Warning |
+| Page longer than 150 lines | Warning |
 | Orphan page: no inbound links other than from the index | Warning |
 | Likely secret in `raw/` | Warning |
 | Superseded decision without `superseded_by` | Warning |
@@ -241,9 +259,21 @@ behind upgrades in steps.
 
 ## CI
 
-A project's CI can run the deterministic checks by checking out this plugin at
-the version in `harness_version` and running `wiki.py check`. Wiki changes are
-reviewed in pull requests like code.
+A project's CI runs the deterministic checks by checking out this plugin at
+the version in `harness_version` and running `wiki.py check --base
+<PR base>`. **Wiki changes need no human review:** they merge when the check
+passes. That makes the check the safety net, which is why a code change that
+leaves its pages untouched is an error in CI rather than a warning.
+
+## graphify's Obsidian export
+
+`graphify export obsidian` turns graphify's *code graph* into an Obsidian
+vault: one note per node (functions, classes, files; 357 notes for a small
+repository) plus a `graph.canvas`, linked by calls and imports. It shows
+structure, not intent. It is **not committed and not merged into `wiki/`**: it
+is regenerated whole, uses `[[wikilinks]]`, and has file names with spaces and
+brackets. To browse structure in Obsidian, export it locally into a separate
+vault; `graphify-out/graph.html` serves the same purpose without Obsidian.
 
 ## Rollout
 
@@ -253,11 +283,8 @@ reviewed in pull requests like code.
 4. Hooks: staleness flag, stale-page reminder
 5. Trial on `replicable-labs`, then on other projects
 
-## Open questions
+## Decisions
 
-- **Page size:** one page per rule or per area? Start per area and split when
-  a page passes about 150 lines.
-- **Review:** do wiki-only PRs need a human reviewer, or can they merge after
-  `check` passes?
-- **graphify's Obsidian export:** keep it as a separate local vault, or link
-  from `overview.md` to a committed copy?
+- **Page size:** one page per topic, 50–150 lines (see [Page size](#page-size)).
+- **Review:** no human review for wiki changes; `check` in CI is the gate.
+- **graphify's Obsidian export:** local only, separate vault, never committed.

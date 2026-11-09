@@ -1,8 +1,8 @@
 # Project wiki (design)
 
-> **Status: design, not implemented yet.** This page specifies what will be
-> built; [Rollout](#rollout) lists the order. Nothing described here exists in
-> the plugin until that section says so.
+> **Status: partly implemented.** This page specifies what will be built;
+> [Rollout](#rollout) lists the order and marks what exists. Anything not
+> marked done there does not exist in the plugin yet.
 
 Each project gets a wiki that **agents read first and humans can browse**,
 with Obsidian as the viewer and GitHub as a fallback. It follows the pattern
@@ -193,7 +193,12 @@ A standard-library Python script in the plugin, run as
 | `check [--strict] [--base <ref>]` | Runs every check below. Exit 1 on errors; warnings fail only with `--strict`. `--base` compares against a git ref (CI passes the PR's base) to catch code changes that left their pages untouched |
 | `index` | Regenerates `index.md` from frontmatter |
 | `stale` | Lists pages whose `code` changed after their `updated` date |
-| `new <type> <title>` | Creates a page from the template with valid frontmatter |
+| `new <type> <title> [--summary <text>] [--code <path>...]` | Creates a page from the template with valid frontmatter (a trap is appended to `traps.md` as a new section) and regenerates `index.md` |
+
+The CLI reads frontmatter with a small YAML subset (plain and quoted values,
+flow and block lists), which is what Obsidian writes. A value containing `: `
+must be quoted. Staleness compares dates, so a code change committed on the
+same day as `updated` doesn't count.
 
 Checks:
 
@@ -261,7 +266,9 @@ behind upgrades in steps.
 
 A project's CI runs the deterministic checks by checking out this plugin at
 the version in `harness_version` and running `wiki.py check --base
-<PR base>`. **Wiki changes need no human review:** they merge when the check
+<PR base>`. The history checks need full history, so the checkout uses
+`fetch-depth: 0`; on a shallow clone `check` warns and skips them.
+**Wiki changes need no human review:** they merge when the check
 passes. That makes the check the safety net, which is why a code change that
 leaves its pages untouched is an error in CI rather than a warning.
 
@@ -277,7 +284,7 @@ vault; `graphify-out/graph.html` serves the same purpose without Obsidian.
 
 ## Rollout
 
-1. CLI: `check`, `index`, `stale`, `new`, with tests
+1. CLI: `check`, `index`, `stale`, `new`, with tests. **Done:** `harness/wiki.py`
 2. Setup: scaffold, `CLAUDE.md` schema section, Obsidian settings, `harness_version` and upgrades
 3. Skills: `wiki-ingest`, `wiki-lint`
 4. Hooks: staleness flag, stale-page reminder

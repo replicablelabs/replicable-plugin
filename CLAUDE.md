@@ -13,6 +13,7 @@ project.
 - Validate the plugin: `claude plugin validate .`
 - Inventory and token cost: `claude --plugin-dir . plugin details replicable-harness`
 - Dogfood on this repo: `claude --plugin-dir .`
+- Project wiki CLI (design: `docs/wiki.md`): `python3 harness/wiki.py --root <project> check|index|stale|new`
 
 ## Rules
 

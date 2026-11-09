@@ -229,5 +229,259 @@ class TestGateChangeDetectionTests(unittest.TestCase):
         self.assertEqual(self.gate()["decision"], "block")
 
 
+import wiki  # noqa: E402
+
+GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+
+WIKI_FIXTURE = {
+    "src/billing.py": "def issue():\n    pass\n",
+    "wiki/overview.md": '''
+        ---
+        type: overview
+        summary: What the system is for.
+        updated: 2026-01-10
+        ---
+        # Overview
+
+        Billing rules live in [Invoices](domain/invoices.md); see also
+        [the credit-note decision](decisions/0001-credit-notes.md) and [traps](traps.md).
+    ''',
+    "wiki/domain/invoices.md": '''
+        ---
+        type: domain
+        summary: "Invoices are immutable once issued: corrections are credit notes."
+        code:
+          - src/billing.py
+        sources: [raw/2026-01-03-billing-call.md, "https://github.com/org/repo/pull/1"]
+        updated: 2026-01-10
+        tags: [billing]
+        ---
+        # Invoices
+
+        Back to the [overview](../overview.md). Code: `src/billing.py`.
+
+        ```
+        [[not a wikilink]] and [not a link](nowhere.md) inside a code block
+        ```
+    ''',
+    "wiki/decisions/0001-credit-notes.md": '''
+        ---
+        type: decision
+        summary: Corrections are credit notes, not edits.
+        status: accepted
+        updated: 2026-01-10
+        ---
+        # Credit notes
+
+        Applies to [invoices](../domain/invoices.md).
+    ''',
+    "wiki/traps.md": '''
+        ---
+        type: trap
+        summary: Known pitfalls.
+        updated: 2026-01-10
+        ---
+        # Traps
+
+        ## Rounding
+
+        See [invoices](domain/invoices.md#rules).
+    ''',
+    "wiki/raw/2026-01-03-billing-call.md": "Notes from the billing call.\n",
+    "wiki/log.md": "# Log\n\n## [2026-01-10] ingest | billing call\n- added domain/invoices.md\n",
+}
+
+
+class WikiTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        for rel, body in WIKI_FIXTURE.items():
+            self.write(rel, textwrap.dedent(body).lstrip())
+        wiki.write_index(wiki.load(self.root))
+        self.git("init", "-q", "-b", "main")
+        self.commit("init", date="2026-01-10T12:00:00")
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def git(self, *args, **env):
+        return subprocess.run(GIT + list(args), cwd=self.root, check=True, capture_output=True, text=True,
+                              env=dict(os.environ, **env)).stdout
+
+    def commit(self, message, date="2026-01-10T12:00:00"):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+
+    def cli(self, *args, root=None):
+        res = subprocess.run([sys.executable, str(PLUGIN / "harness" / "wiki.py"), "--root", str(root or self.root),
+                              *args], capture_output=True, text=True, timeout=60)
+        return res.returncode, res.stdout + res.stderr
+
+    def assertCheck(self, *expected, code=1, args=()):
+        rc, out = self.cli("check", *args)
+        self.assertEqual(rc, code, out)
+        for text in expected:
+            self.assertIn(text, out)
+        return out
+
+    def test_a_valid_wiki_passes_strict_check(self):
+        out = self.assertCheck("0 error(s), 0 warning(s) in 4 page(s)", code=0, args=["--strict"])
+        self.assertNotIn("nowhere.md", out)
+
+    def test_index_is_generated_grouped_by_type(self):
+        index = (self.root / "wiki" / "index.md").read_text()
+        self.assertIn("## Domain\n\n- [Invoices](domain/invoices.md): Invoices are immutable once issued: "
+                      "corrections are credit notes.", index)
+        self.assertLess(index.index("## Overview"), index.index("## Decisions"))
+        self.write("wiki/index.md", index + "- [Hand-written](x.md): nope\n")
+        self.assertCheck("index.md: out of date")
+        self.assertEqual(self.cli("index")[0], 0)
+        self.assertEqual(self.cli("check")[0], 0)
+
+    def test_frontmatter_errors(self):
+        page = self.root / "wiki" / "domain" / "invoices.md"
+        good = page.read_text()
+        cases = {
+            "# no frontmatter\n": "missing frontmatter",
+            good.replace("summary: \"Invoices", "summary: Invoices").replace('notes."', "notes."): "must be quoted",
+            good.replace("type: domain", "type: rule"): "type must be one of",
+            good.replace("type: domain", "type: decision"): "belongs in wiki/decisions/",
+            good.replace("updated: 2026-01-10", "updated: soon"): "updated must be a date",
+            good.replace("Invoices are immutable", "x" * 121): "at most 120",
+            good.replace("  - src/billing.py", "  - src/gone.py"): "code path does not exist",
+            good.replace("raw/2026-01-03", "raw/2026-01-04"): "source does not exist",
+        }
+        for text, expected in cases.items():
+            with self.subTest(expected=expected):
+                page.write_text(text)
+                self.cli("index")
+                self.assertCheck("wiki/domain/invoices.md", expected)
+
+    def test_decision_status_and_supersession(self):
+        page = self.root / "wiki" / "decisions" / "0001-credit-notes.md"
+        good = page.read_text()
+        page.write_text(good.replace("status: accepted", "status: maybe"))
+        self.assertCheck("decision status must be one of")
+        page.write_text(good.replace("status: accepted", "status: superseded"))
+        self.assertCheck("superseded decision without superseded_by", code=0)
+        page.write_text(good.replace("status: accepted", "status: superseded\nsuperseded_by: 0002-x.md"))
+        self.assertCheck("superseded_by does not exist")
+
+    def test_links_must_be_relative_markdown_links_that_resolve(self):
+        page = self.root / "wiki" / "decisions" / "0001-credit-notes.md"
+        good = page.read_text()
+        for extra, expected in [("[gone](../domain/gone.md)", "broken link: ../domain/gone.md"),
+                                ("[[invoices]]", "[[wikilinks]] don't render on GitHub"),
+                                ("[code](../../src/billing.py)", "link leaves the wiki"),
+                                ("[abs](/wiki/overview.md)", "link must be relative")]:
+            with self.subTest(expected=expected):
+                page.write_text(good + "\n" + extra + "\n")
+                self.assertIn(":11: ", self.assertCheck(expected))
+        page.write_text(good + "\nInline `[[fine]]`, [web](https://example.com), [top](#credit-notes).\n")
+        self.assertCheck(code=0, args=["--strict"])
+
+    def test_file_names_follow_the_convention(self):
+        for rel, expected in [("wiki/domain/Bad Name.md", "kebab-case"),
+                              ("wiki/decisions/credit-notes.md", "numbered kebab-case"),
+                              ("wiki/raw/billing-call.md", "raw/YYYY-MM-DD-short-title.md")]:
+            with self.subTest(rel=rel):
+                self.write(rel, "x\n")
+                self.assertCheck(expected)
+                (self.root / rel).unlink()
+
+    def test_raw_sources_are_immutable(self):
+        raw = self.root / "wiki" / "raw" / "2026-01-03-billing-call.md"
+        raw.write_text("Edited notes.\n")
+        self.assertCheck("wiki/raw/2026-01-03-billing-call.md: raw sources are immutable")
+        self.commit("edit raw")
+        self.assertCheck("raw sources are immutable")
+
+    def test_likely_secrets_in_raw_warn_without_printing_them(self):
+        secret = "ghp_" + "a1B2" * 9
+        self.write("wiki/raw/2026-01-05-pasted-thread.md", f"ok\ntoken: {secret}\n")
+        out = self.assertCheck("2026-01-05-pasted-thread.md:2: likely secret", code=0)
+        self.assertNotIn(secret, out)
+        self.assertEqual(self.cli("check", "--strict")[0], 1)
+
+    def test_long_and_orphan_pages_warn(self):
+        self.assertEqual(self.cli("new", "domain", "Refunds", "--summary", "How refunds work.")[0], 0)
+        self.assertCheck("wiki/domain/refunds.md: orphan", code=0)
+        page = self.root / "wiki" / "domain" / "invoices.md"
+        page.write_text(page.read_text() + "line\n" * 150)
+        self.assertCheck("wiki/domain/invoices.md: page has", code=0)
+
+    def test_stale_pages_are_listed_and_warned(self):
+        self.write("src/billing.py", "def issue():\n    return 1\n")
+        self.commit("change billing", date="2026-02-01T12:00:00")
+        rc, out = self.cli("stale")
+        self.assertEqual(rc, 0)
+        self.assertIn("wiki/domain/invoices.md (updated 2026-01-10): src/billing.py changed 2026-02-01", out)
+        self.assertCheck("stale: code changed after updated 2026-01-10", code=0)
+        self.assertCheck("stale", args=["--strict"])
+
+    def test_base_fails_when_code_changes_without_its_page(self):
+        self.git("checkout", "-qb", "feature")
+        self.write("src/billing.py", "def issue():\n    return 2\n")
+        self.commit("change billing")
+        self.assertCheck("its code changed since main but the page did not: src/billing.py", args=["--base", "main"])
+        self.assertEqual(self.cli("check")[0], 0)  # without --base it is not an error
+        page = self.root / "wiki" / "domain" / "invoices.md"
+        page.write_text(page.read_text().replace("Back to", "Checked again. Back to"))
+        self.assertCheck(code=0, args=["--base", "main"])  # uncommitted page changes count
+        self.assertCheck("no merge base", args=["--base", "nope"])
+
+    def test_shallow_clones_warn_instead_of_guessing(self):
+        clone = self.root.parent / (self.root.name + "-clone")
+        self.addCleanup(shutil.rmtree, clone, True)
+        subprocess.run(["git", "clone", "-q", "--depth", "1", self.root.as_uri(), str(clone)], check=True)
+        rc, out = self.cli("check", root=clone)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("shallow git clone", out)
+
+    def test_new_creates_valid_pages_and_updates_the_index(self):
+        self.assertEqual(self.cli("new", "decision", "Use Postgres!", "--code", "src/billing.py")[0], 0)
+        self.assertEqual(self.cli("new", "decision", "Second one")[0], 0)
+        first = self.root / "wiki" / "decisions" / "0002-use-postgres.md"
+        self.assertTrue(first.exists())
+        self.assertTrue((self.root / "wiki" / "decisions" / "0003-second-one.md").exists())
+        meta, _ = wiki.parse_frontmatter(first.read_text())
+        self.assertEqual((meta["type"], meta["status"], meta["code"]), ("decision", "proposed", ["src/billing.py"]))
+        self.assertIn("decisions/0002-use-postgres.md", (self.root / "wiki" / "index.md").read_text())
+        self.assertIn("0 error(s)", self.cli("check")[1])
+        rc, out = self.cli("new", "domain", "Invoices")
+        self.assertEqual(rc, 1)
+        self.assertIn("already exists", out)
+
+    def test_new_trap_appends_a_section(self):
+        self.assertEqual(self.cli("new", "trap", "Timezones", "--code", "src/billing.py")[0], 0)
+        text = (self.root / "wiki" / "traps.md").read_text()
+        self.assertIn("## Rounding", text)
+        self.assertIn("## Timezones\n\n- **Symptom:** TODO", text)
+        self.assertEqual(wiki.parse_frontmatter(text)[0]["code"], ["src/billing.py"])
+        self.assertCheck(code=0, args=["--strict"])
+
+    def test_new_in_an_empty_project_creates_the_wiki(self):
+        empty = tempfile.TemporaryDirectory()
+        self.addCleanup(empty.cleanup)
+        self.assertIn("nothing to do", self.cli("check", root=empty.name)[1])
+        self.assertEqual(self.cli("new", "overview", "My system", root=empty.name)[0], 0)
+        self.assertIn("- [My system](overview.md): TODO", (Path(empty.name) / "wiki" / "index.md").read_text())
+
+    def test_frontmatter_subset_round_trips(self):
+        meta = {"type": "domain", "summary": "Has: a colon, and 'quotes'", "code": ["a/b.py", "c d"],
+                "sources": [], "updated": "2026-01-01", "superseded_by": None}
+        parsed, start = wiki.parse_frontmatter(wiki.dump_frontmatter(meta) + "body\n")
+        self.assertEqual(parsed, meta)
+        block, _ = wiki.parse_frontmatter("---\n# comment\ntags:\n  - a\n  - 'b c'\nx: plain # note\n---\n")
+        self.assertEqual(block, {"tags": ["a", "b c"], "x": "plain"})
+        for bad in ("---\nx: {a: 1}\n---\n", "---\n  - orphan\n---\n", "---\nx: 1\n", "---\nx: 1\nx: 2\n---\n"):
+            with self.subTest(bad=bad), self.assertRaises(wiki.FrontmatterError):
+                wiki.parse_frontmatter(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

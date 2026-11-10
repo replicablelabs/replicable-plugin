@@ -10,8 +10,8 @@ from _common import ROOT, context, project, read_event
 
 read_event()
 if not project.graphify():
-    context("SessionStart", "replicable-harness: graphify is not installed, so there is no code graph. "
-            f"Tell the user once: `{project.GRAPHIFY_INSTALL}`, then `/replicable-harness:setup`.")
+    context("SessionStart", "replicable: graphify is not installed, so there is no code graph. "
+            f"Tell the user once: `{project.GRAPHIFY_INSTALL}`, then `/replicable:setup`.")
     raise SystemExit(0)
 
 notes = []
@@ -24,6 +24,6 @@ if not project.graph_file(ROOT).exists():
         notes.append(f"could not build the graph: {exc}")
 if not project.graphify_claude_integration(ROOT):
     notes.append("graphify's Claude Code rules and hooks are not installed for this project; "
-                 "suggest `/replicable-harness:setup` to the user once")
+                 "suggest `/replicable:setup` to the user once")
 if notes:
-    context("SessionStart", "replicable-harness: " + "; ".join(notes) + ".")
+    context("SessionStart", "replicable: " + "; ".join(notes) + ".")

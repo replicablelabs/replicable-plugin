@@ -9,9 +9,9 @@ argument-hint: "[all | <page path>]"
 Scope: $ARGUMENTS (default: stale pages only; `all` checks every page with
 `code`; a path checks one page)
 
-1. **Orient.** Call the harness `harness_info` tool; `scripts.wiki` is the
+1. **Orient.** Call the replicable `info` tool; `scripts.wiki` is the
    wiki CLI, run as `python3 <scripts.wiki> <command>`. If the project has no
-   `wiki/`, stop and suggest `/replicable-harness:setup`.
+   `wiki/`, stop and suggest `/replicable:setup`.
 2. **Structure.** Run `python3 <scripts.wiki> check`. Fix each error:
    broken links (find where the page went), `[[wikilinks]]` (rewrite as
    relative Markdown links), `code` paths that no longer exist (find the new

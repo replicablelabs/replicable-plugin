@@ -24,6 +24,6 @@ if pending:
         lines.append(f"- {page} ({', '.join(files[:3])}{', ...' if len(files) > 3 else ''})")
     if len(items) > MAX_PAGES:
         lines.append(f"- ... and {len(items) - MAX_PAGES} more")
-    lines.append("Mention this to the user once and offer /replicable-harness:wiki-lint (or wiki-ingest for "
+    lines.append("Mention this to the user once and offer /replicable:wiki-lint (or wiki-ingest for "
                  "the change that touched them).")
     context("SessionStart", "\n".join(lines))

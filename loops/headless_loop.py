@@ -39,7 +39,7 @@ ALLOWED_TOOLS = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
     "Bash(graphify query:*)", "Bash(graphify explain:*)", "Bash(graphify path:*)",
     "Bash(graphify affected:*)", "Bash(graphify god-nodes:*)", "Bash(graphify update:*)",
-    f"mcp__plugin_{project.PLUGIN}_harness",
+    f"mcp__plugin_{project.PLUGIN}_{project.MCP_SERVER}",
 ]
 
 PROMPT = """You are iteration {i} of {n} of an autonomous loop working toward this goal:
@@ -88,7 +88,7 @@ def main(argv=None) -> int:
     root = project.root()
     test_cmd = project.test_command(root)
     if not test_cmd:
-        raise SystemExit('No test command found. Set "test" in .claude/replicable-harness.json: '
+        raise SystemExit(f'No test command found. Set "test" in .claude/{project.CONFIG_NAME}: '
                          "the loop needs an objective definition of done.")
     tree = make_worktree(root, args.name) if not args.dry_run else root
     env = dict(os.environ, LAB_TEST_CMD=test_cmd, HARNESS_ROOT=str(tree))

@@ -1,9 +1,9 @@
 """Stop hook: a bounded "don't stop until the tests are green" loop.
 
-Opt-in so it never surprises you: enable with `/replicable-harness:test-gate on`
+Opt-in so it never surprises you: enable with `/replicable:test-gate on`
 (the harness `test_gate` tool) or by exporting LAB_TEST_GATE=1.
 
-The command comes from `.claude/replicable-harness.json` ("test"), else it is
+The command comes from `.claude/replicable.json` ("test"), else it is
 detected from the project (Makefile, package.json, go.mod, Cargo.toml, Python).
 
 - Only runs when there are uncommitted changes other than docs.
@@ -34,7 +34,7 @@ limit = int(os.environ.get("LAB_TEST_GATE_MAX", "3"))
 
 command = project.test_command(ROOT)
 if not command:
-    emit({"systemMessage": "test-gate: no test command found; set \"test\" in .claude/replicable-harness.json"})
+    emit({"systemMessage": "test-gate: no test command found; set \"test\" in .claude/replicable.json"})
     raise SystemExit(0)
 result = subprocess.run(command, shell=True, cwd=ROOT, capture_output=True, text=True, timeout=280)
 if result.returncode == 0:

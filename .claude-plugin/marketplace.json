@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "replicable-harness",
+      "name": "replicable",
       "source": "./",
       "description": "Graph-aware verification hooks (on graphify), a test gate, subagents, skills and agentic loops for Claude Code."
     }

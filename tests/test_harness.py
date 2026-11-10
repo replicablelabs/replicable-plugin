@@ -1,4 +1,4 @@
-"""Tests for the replicable-harness plugin: project detection, MCP server, hooks (with graphify)."""
+"""Tests for the replicable plugin: project detection, MCP server, hooks (with graphify)."""
 
 import json
 import os
@@ -95,14 +95,21 @@ class ProjectTests(unittest.TestCase):
 
     def test_config_overrides_detection(self):
         self.write("go.mod")
-        self.write(".claude/replicable-harness.json", '{"test": "just check"}')
+        self.write(".claude/replicable.json", '{"test": "just check"}')
         self.assertEqual(project.test_command(), "just check")
+
+    def test_pre_0_6_config_name_is_still_read_until_renamed(self):
+        self.write(".claude/replicable-harness.json", '{"test": "old name"}')
+        self.assertEqual(project.test_command(), "old name")
+        self.assertTrue(project.info()["config_file"].endswith("replicable-harness.json"))
+        self.write(".claude/replicable.json", '{"test": "new name"}')
+        self.assertEqual(project.test_command(), "new name")
 
     def test_state_lives_outside_the_project(self):
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.root / "cache")}):
             os.environ.pop("HARNESS_DATA", None)
             data = project.data_dir()
-        self.assertTrue(str(data).startswith(str(self.root / "cache" / "replicable-harness")))
+        self.assertTrue(str(data).startswith(str(self.root / "cache" / "replicable")))
         self.assertNotEqual(data, project.data_dir(self.root / "other"))
 
     def test_detects_graphify_claude_integration(self):
@@ -133,11 +140,17 @@ class McpServerTests(unittest.TestCase):
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         )
-        self.assertEqual(init["result"]["serverInfo"]["name"], "harness")
-        self.assertEqual({t["name"] for t in tools["result"]["tools"]}, {"harness_info", "test_gate"})
+        self.assertEqual(init["result"]["serverInfo"]["name"], "replicable")
+        self.assertEqual({t["name"] for t in tools["result"]["tools"]}, {"info", "test_gate"})
+
+    def test_mcp_json_registers_the_server_under_its_name(self):
+        servers = json.loads((PLUGIN / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(list(servers), [project.MCP_SERVER])
+        manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        self.assertEqual(manifest["name"], project.PLUGIN)
 
     def test_gate_toggle_is_reflected_in_info(self):
-        on, info, off = self.rpc(self.call("test_gate", action="on"), self.call("harness_info"),
+        on, info, off = self.rpc(self.call("test_gate", action="on"), self.call("info"),
                                  self.call("test_gate", action="off"))
         self.assertIn("test-gate is ON", on["result"]["content"][0]["text"])
         data = json.loads(info["result"]["content"][0]["text"])
@@ -185,7 +198,7 @@ class HookTests(unittest.TestCase):
         context = out["hookSpecificOutput"]["additionalContext"]
         self.assertTrue((self.root / "graphify-out" / "graph.json").exists())
         self.assertIn("built graphify-out/graph.json", context)
-        self.assertIn("/replicable-harness:setup", context)
+        self.assertIn("/replicable:setup", context)
 
     @needs_graphify
     def test_post_edit_reports_blast_radius_and_tests_from_graphify(self):
@@ -551,7 +564,7 @@ class WikiHookTests(unittest.TestCase):
         out = self.hook("wiki_reminder.py", {"source": "startup"})
         self.assertIn("1 page(s) may be out of date", out)
         self.assertIn("- wiki/domain/invoices.md (src/billing.py)", out)
-        self.assertIn("/replicable-harness:wiki-lint", out)
+        self.assertIn("/replicable:wiki-lint", out)
         self.edit("wiki/domain/invoices.md")  # editing the page clears its flag
         self.assertIsNone(self.hook("wiki_reminder.py", {}))
 
@@ -591,7 +604,7 @@ class WikiSkillTests(unittest.TestCase):
                 used = set(re.findall(r"<scripts\.wiki> (\w+)", text.replace("\n", " ")))
                 self.assertTrue(used)
                 self.assertLessEqual(used, commands, used - commands)
-                self.assertIn("harness_info", text)
+                self.assertIn("the replicable `info` tool", text)
 
     def test_claude_section_points_to_the_skills(self):
         section = (PLUGIN / "harness" / "templates" / "claude-wiki-section.md").read_text()
@@ -630,23 +643,23 @@ class ScaffoldTests(unittest.TestCase):
     def test_apply_creates_a_wiki_that_passes_check_and_is_idempotent(self):
         self.write("CLAUDE.md", "# My project\n\nOwn rules.\n")
         self.write(".gitignore", "node_modules/\n")
-        self.write(".claude/replicable-harness.json", '{"test": "make test"}')
+        self.write(".claude/replicable.json", '{"test": "make test"}')
         self.run_scaffold("--apply")
         res = subprocess.run([sys.executable, str(PLUGIN / "harness" / "wiki.py"), "--root", str(self.root),
                               "check", "--strict"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stdout)
         claude = (self.root / "CLAUDE.md").read_text()
-        self.assertTrue(claude.startswith("# My project\n\nOwn rules.\n\n<!-- replicable-harness:wiki v1 -->"))
+        self.assertTrue(claude.startswith("# My project\n\nOwn rules.\n\n<!-- replicable:wiki v2 -->"))
         self.assertIn("## Project wiki", claude)
         self.assertEqual((self.root / ".gitignore").read_text().count("wiki/.obsidian/workspace*.json"), 1)
         self.assertTrue((self.root / "wiki" / "raw" / ".gitkeep").exists())
-        config = json.loads((self.root / ".claude" / "replicable-harness.json").read_text())
+        config = json.loads((self.root / ".claude" / "replicable.json").read_text())
         self.assertEqual(config, {"test": "make test", "harness_version": project.plugin_version()})
         self.assertEqual(json.loads((self.root / "wiki" / ".obsidian" / "app.json").read_text()), scaffold.OBSIDIAN)
         workflow = (self.root / ".github" / "workflows" / "wiki.yml").read_text()
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn('--base "origin/$BASE"', workflow)  # the base ref goes through env, never into the script
-        self.assertIn("https://github.com/replicablelabs/replicable-claude.git", workflow)
+        self.assertIn("https://github.com/replicablelabs/replicable-plugin.git", workflow)
         self.assertIn("everything is up to date", self.run_scaffold())
 
     def test_upgrade_replaces_only_managed_content(self):
@@ -655,18 +668,37 @@ class ScaffoldTests(unittest.TestCase):
         self.write("wiki/raw/2026-01-01-note.md", "raw\n")
         self.write("wiki/.obsidian/app.json", '{"vimMode": true, "useMarkdownLinks": false}')
         self.write(".github/workflows/wiki.yml", "old\n")
-        self.write(".claude/replicable-harness.json", '{"harness_version": "0.0.1"}')
+        self.write(".claude/replicable.json", '{"harness_version": "0.0.1"}')
         out = self.run_scaffold("--apply")
         self.assertIn("0.0.1 -> " + project.plugin_version(), out)
         claude = (self.root / "CLAUDE.md").read_text()
         self.assertNotIn("old rules", claude)
-        self.assertIn("v1 -->", claude)
-        self.assertTrue(claude.endswith("<!-- /replicable-harness:wiki -->\n\nAfter.\n"))
+        self.assertIn("v2 -->", claude)
+        self.assertTrue(claude.endswith("<!-- /replicable:wiki -->\n\nAfter.\n"))
         self.assertEqual((self.root / "wiki" / "overview.md").read_text(), "my own overview\n")
         self.assertEqual((self.root / "wiki" / "raw" / "2026-01-01-note.md").read_text(), "raw\n")
         self.assertEqual(json.loads((self.root / "wiki" / ".obsidian" / "app.json").read_text()),
                          dict(scaffold.OBSIDIAN, vimMode=True))
         self.assertIn("fetch-depth: 0", (self.root / ".github" / "workflows" / "wiki.yml").read_text())
+
+    def test_upgrade_from_pre_0_6_renames_the_config_markers_and_index(self):
+        self.write("CLAUDE.md", "# P\n\n<!-- replicable-harness:wiki v1 -->\nold\n<!-- /replicable-harness:wiki -->\n")
+        self.write(".gitignore", "a/\n# replicable-harness (managed)\nold/\n# /replicable-harness\nb/\n")
+        self.write("wiki/index.md", "# Index\n\n<!-- Generated ... by the replicable-harness wiki CLI -->\n")
+        self.write(".claude/replicable-harness.json", '{"test": "make test", "harness_version": "0.5.0"}')
+        out = self.run_scaffold()
+        self.assertIn("remove .claude/replicable-harness.json: renamed to .claude/replicable.json", out)
+        self.assertTrue((self.root / ".claude" / "replicable-harness.json").exists())  # dry run
+        self.run_scaffold("--apply")
+        self.assertFalse((self.root / ".claude" / "replicable-harness.json").exists())
+        config = json.loads((self.root / ".claude" / "replicable.json").read_text())
+        self.assertEqual(config, {"test": "make test", "harness_version": project.plugin_version()})
+        for rel in ("CLAUDE.md", ".gitignore", "wiki/index.md", ".github/workflows/wiki.yml"):
+            self.assertNotIn("replicable-harness", (self.root / rel).read_text(), rel)
+        self.assertEqual((self.root / "CLAUDE.md").read_text().count("<!-- replicable:wiki v2 -->"), 1)
+        gitignore = (self.root / ".gitignore").read_text()
+        self.assertTrue(gitignore.startswith("a/\n# replicable (managed)\n") and gitignore.endswith("# /replicable\nb/\n"))
+        self.assertIn("everything is up to date", self.run_scaffold())
 
     def test_migrations_run_in_order_for_versions_skipped(self):
         ran = []
@@ -677,13 +709,13 @@ class ScaffoldTests(unittest.TestCase):
                 return []
             return migrate
 
-        self.write(".claude/replicable-harness.json", '{"harness_version": "0.0.1"}')
+        self.write(".claude/replicable.json", '{"harness_version": "0.0.1"}')
         current = project.plugin_version()
         with patch.dict(scaffold.MIGRATIONS, {"0.0.10": step("0.0.10"), "0.0.2": step("0.0.2"),
                                               "0.0.1": step("0.0.1"), "99.0.0": step("99.0.0")}):
             scaffold.plan(self.root)
         self.assertEqual(ran, ["0.0.2", "0.0.10"])  # numeric order; neither the current nor future versions
-        self.write(".claude/replicable-harness.json", '{"harness_version": "99.0.0"}')
+        self.write(".claude/replicable.json", '{"harness_version": "99.0.0"}')
         with self.assertRaises(SystemExit) as raised:
             scaffold.plan(self.root)
         self.assertIn(f"newer than the installed plugin ({current})", str(raised.exception))
@@ -695,7 +727,7 @@ class ScaffoldTests(unittest.TestCase):
         self.assertIn("WARNING: .claude/settings.json is committed with the project and sets ANTHROPIC_API_KEY.", out)
         self.assertNotIn("sk-x", out)
 
-    def test_harness_info_lists_the_wiki_scripts_and_versions(self):
+    def test_info_lists_the_wiki_scripts_and_versions(self):
         info = project.info(self.root)
         self.assertTrue(info["scripts"]["wiki"].endswith("harness/wiki.py"))
         self.assertTrue(Path(info["scripts"]["scaffold"]).exists())

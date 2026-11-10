@@ -1,4 +1,4 @@
-# Managed by replicable-harness: `/replicable-harness:setup` replaces this file
+# Managed by replicable: `/replicable:setup` replaces this file
 # on upgrade. Runs the deterministic wiki checks; on pull requests it also fails
 # when code changed without the wiki pages that describe it.
 name: wiki
@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0 # staleness, raw-immutability and --base need history
       - name: Fetch the harness version this repository uses
         run: |
-          version=$(python3 -c 'import json; print(json.load(open(".claude/replicable-harness.json"))["harness_version"])')
+          version=$(python3 -c 'import json; print(json.load(open(".claude/replicable.json"))["harness_version"])')
           git clone --quiet --depth 1 --branch "v$version" {repository}.git "$RUNNER_TEMP/harness"
       - name: wiki check
         env:

@@ -1,8 +1,10 @@
 {
   "mcpServers": {
-    "harness": {
+    "replicable": {
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/harness/mcp_server.py"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/harness/mcp_server.py"
+      ]
     }
   }
 }

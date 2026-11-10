@@ -1,6 +1,6 @@
-# replicable-claude
+# replicable-plugin
 
-A Claude Code plugin (`replicable-harness`) that extends the harness with
+A Claude Code plugin (`replicable`) that extends the harness with
 graph-aware verification hooks, a test gate, subagents, skills and loops. The
 code graph comes from graphify (https://github.com/Graphify-Labs/graphify);
 this plugin must work in **any** repository and never assume a particular
@@ -11,7 +11,7 @@ project.
 - Test: `python3 -m unittest discover -s tests` (stdlib only; tests that need
   graphify are skipped when it is not installed)
 - Validate the plugin: `claude plugin validate .`
-- Inventory and token cost: `claude --plugin-dir . plugin details replicable-harness`
+- Inventory and token cost: `claude --plugin-dir . plugin details replicable`
 - Dogfood on this repo: `claude --plugin-dir .`
 - Project wiki CLI (design: `docs/wiki.md`): `python3 harness/wiki.py --root <project> check|index|stale|covers|log|new`
 - Per-project setup and upgrades (dry run; `--apply` writes): `python3 harness/scaffold.py --root <project>`
@@ -28,9 +28,9 @@ project.
 - Standard library only in this plugin's own code (Python 3.9+).
 - Everything project-specific (root, state dir, config, test command, graphify
   status) goes through `harness/project.py`. Never hard-code a repository path.
-- Plugin state lives in the data dir (`~/.cache/replicable-harness/...`), never
+- Plugin state lives in the data dir (`~/.cache/replicable/...`), never
   inside the user's repository. (graphify's `graphify-out/` is graphify's.)
 - Hooks must be fast, exit 0 on anything unexpected, and never print secrets.
   A Stop hook that blocks must have a retry cap.
-- Skills reach plugin scripts through the `harness_info` MCP tool, not paths.
+- Skills reach plugin scripts through the `info` tool of the plugin's MCP server, not paths.
 - Every behaviour change gets a test in `tests/test_harness.py`.

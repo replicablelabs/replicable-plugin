@@ -5,10 +5,10 @@ argument-hint: <goal>
 disable-model-invocation: true
 ---
 
-1. Call the harness `harness_info` tool. Note `scripts.headless_loop` and
+1. Call the replicable `info` tool. Note `scripts.headless_loop` and
    `test_command`. If `test_command` is null, stop: the loop needs an objective
    definition of done, so ask the user to set `"test"` in
-   `.claude/replicable-harness.json`.
+   `.claude/replicable.json`.
 2. Show the user this command with the real script path and their goal, and
    explain the caps (iterations, USD per iteration, isolated worktree branch
    `loop/<name>`). Ask before running it: it spends money and makes commits on

@@ -8,7 +8,7 @@ Project root
     the git top-level of the current directory > the current directory.
 
 Plugin state (test-gate markers, loop worktrees, progress notes)
-    ``HARNESS_DATA`` > ``$XDG_CACHE_HOME/replicable-harness/<project>-<hash>``
+    ``HARNESS_DATA`` > ``$XDG_CACHE_HOME/replicable/<project>-<hash>``
     (default ``~/.cache/...``), outside the repository.
 
 Code graph
@@ -16,11 +16,13 @@ Code graph
     ``<root>/graphify-out/``. This plugin only calls graphify's CLI.
 
 Per-project configuration (optional, commit it with the project)
-    ``<root>/.claude/replicable-harness.json``::
+    ``<root>/.claude/replicable.json``::
 
         { "test": "npm test" }
 
-    Without it the test command is detected from the project's files.
+    Without it the test command is detected from the project's files. The
+    pre-0.6 name ``replicable-harness.json`` is still read until
+    ``scaffold.py`` renames it.
 """
 
 from __future__ import annotations
@@ -33,9 +35,11 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
-PLUGIN = "replicable-harness"
+PLUGIN = "replicable"
+MCP_SERVER = "replicable"  # the server's key in .mcp.json; tools are mcp__plugin_<PLUGIN>_<MCP_SERVER>__*
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_NAME = f"{PLUGIN}.json"
+LEGACY_CONFIG_NAME = "replicable-harness.json"  # before 0.6.0; scaffold.py renames it
 GRAPHIFY_INSTALL = 'uv tool install "graphifyy[mcp]"   # or: pipx install graphifyy'
 
 
@@ -61,8 +65,15 @@ def data_dir(project: Optional[Path] = None) -> Path:
     return cache / PLUGIN / f"{project.name}-{digest}"
 
 
+def config_path(project: Optional[Path] = None) -> Path:
+    """The config file in use: the current name, else the pre-0.6 one, else where it would go."""
+    directory = (project or root()) / ".claude"
+    current, legacy = directory / CONFIG_NAME, directory / LEGACY_CONFIG_NAME
+    return legacy if legacy.exists() and not current.exists() else current
+
+
 def config(project: Optional[Path] = None) -> dict:
-    path = (project or root()) / ".claude" / CONFIG_NAME
+    path = config_path(project)
     if not path.exists():
         return {}
     try:
@@ -157,7 +168,7 @@ def info(project: Optional[Path] = None) -> dict:
         "plugin_root": str(PLUGIN_ROOT),
         "project_root": str(project),
         "data_dir": str(data_dir(project)),
-        "config_file": str(project / ".claude" / CONFIG_NAME),
+        "config_file": str(config_path(project)),
         "config": config(project),
         "test_command": test_command(project),
         "test_gate": (data_dir(project) / "test-gate").exists() or os.environ.get("LAB_TEST_GATE", "") in {"1", "true", "on"},

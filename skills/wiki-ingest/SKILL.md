@@ -13,9 +13,9 @@ calls, imports) belongs to graphify: never copy it into a page. Wiki changes
 get no human review, so everything you write must be checked against the code
 and the source, and `check` must pass.
 
-1. **Orient.** Call the harness `harness_info` tool; `scripts.wiki` is the
+1. **Orient.** Call the replicable `info` tool; `scripts.wiki` is the
    wiki CLI, run as `python3 <scripts.wiki> <command>`. If the project has no
-   `wiki/`, stop and suggest `/replicable-harness:setup`. Read
+   `wiki/`, stop and suggest `/replicable:setup`. Read
    `wiki/index.md` (not every page) and the `## Project wiki` section of
    `CLAUDE.md`.
 2. **Gather the source.**

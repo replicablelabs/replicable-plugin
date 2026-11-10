@@ -12,7 +12,9 @@ What it manages in the project:
 - the wiki schema section of ``CLAUDE.md``, between the plugin's markers
 - a block of ``.gitignore`` entries, between the plugin's markers
 - ``.github/workflows/wiki.yml``: owned by the plugin, replaced on upgrade
-- ``harness_version`` in ``.claude/replicable-harness.json`` (other keys kept)
+- ``harness_version`` in ``.claude/replicable.json`` (other keys kept)
+- the pre-0.6 names: ``.claude/replicable-harness.json`` and the
+  ``replicable-harness`` markers are renamed to their ``replicable`` forms
 
 Upgrades never touch wiki pages or ``raw/``. Version-specific steps go in
 ``MIGRATIONS`` and run in order, so a repository several versions behind
@@ -38,9 +40,11 @@ import wiki  # noqa: E402
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 PLUGIN_MANIFEST = project.PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
-SECTION_VERSION = 1
-SECTION_RE = re.compile(r"<!-- replicable-harness:wiki v\d+ -->\n.*?<!-- /replicable-harness:wiki -->\n?", re.S)
-GITIGNORE_START, GITIGNORE_END = "# replicable-harness (managed)", "# /replicable-harness"
+SECTION_VERSION = 2
+# The markers also match their pre-0.6 "replicable-harness" spelling, so upgrades replace old blocks.
+SECTION_RE = re.compile(r"<!-- replicable(?:-harness)?:wiki v\d+ -->\n.*?<!-- /replicable(?:-harness)?:wiki -->\n?", re.S)
+GITIGNORE_START, GITIGNORE_END = f"# {project.PLUGIN} (managed)", f"# /{project.PLUGIN}"
+GITIGNORE_RE = re.compile(r"# replicable(?:-harness)? \(managed\)\n.*?# /replicable(?:-harness)?\n?", re.S)
 GITIGNORE_LINES = ["wiki/.obsidian/workspace*.json", "graphify-out/cache/"]
 OBSIDIAN = {"useMarkdownLinks": True, "newLinkFormat": "relative", "alwaysUpdateLinks": True}
 CREDENTIAL_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
@@ -66,12 +70,17 @@ def parse_version(v: str) -> Tuple[int, ...]:
 class Change:
     path: str  # relative to the project root
     old: Optional[str]  # None when the file is new
-    new: str
+    new: Optional[str]  # None when the file is removed
     why: str
 
+    @property
+    def verb(self) -> str:
+        return "create" if self.old is None else "remove" if self.new is None else "update"
+
     def diff(self) -> str:
-        return "".join(difflib.unified_diff((self.old or "").splitlines(True), self.new.splitlines(True),
-                                            "/dev/null" if self.old is None else f"a/{self.path}", f"b/{self.path}"))
+        return "".join(difflib.unified_diff((self.old or "").splitlines(True), (self.new or "").splitlines(True),
+                                            "/dev/null" if self.old is None else f"a/{self.path}",
+                                            "/dev/null" if self.new is None else f"b/{self.path}"))
 
 
 def template(name: str, **values: str) -> str:
@@ -87,8 +96,8 @@ def read(root: Path, rel: str) -> Optional[str]:
 
 
 def claude_section() -> str:
-    return (f"<!-- replicable-harness:wiki v{SECTION_VERSION} -->\n" + template("claude-wiki-section.md").rstrip("\n")
-            + "\n<!-- /replicable-harness:wiki -->\n")
+    return (f"<!-- {project.PLUGIN}:wiki v{SECTION_VERSION} -->\n" + template("claude-wiki-section.md").rstrip("\n")
+            + f"\n<!-- /{project.PLUGIN}:wiki -->\n")
 
 
 def with_claude_section(text: Optional[str], project_name: str) -> str:
@@ -103,9 +112,8 @@ def with_claude_section(text: Optional[str], project_name: str) -> str:
 def with_gitignore_block(text: Optional[str]) -> str:
     block = "\n".join([GITIGNORE_START, *GITIGNORE_LINES, GITIGNORE_END]) + "\n"
     text = text or ""
-    pattern = re.compile(re.escape(GITIGNORE_START) + r"\n.*?" + re.escape(GITIGNORE_END) + r"\n?", re.S)
-    if pattern.search(text):
-        return pattern.sub(lambda _: block, text, count=1)
+    if GITIGNORE_RE.search(text):
+        return GITIGNORE_RE.sub(lambda _: block, text, count=1)
     return (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
 
 
@@ -119,11 +127,11 @@ def with_obsidian_settings(text: Optional[str]) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def with_version(text: Optional[str], version: str) -> str:
+def with_version(root: Path, text: Optional[str], version: str) -> str:
     try:
         data = json.loads(text) if text else {}
     except json.JSONDecodeError:
-        raise SystemExit(f".claude/{project.CONFIG_NAME} is not valid JSON; fix it first")
+        raise SystemExit(f"{project.config_path(root)} is not valid JSON; fix it first")
     data["harness_version"] = version
     return json.dumps(data, indent=2) + "\n"
 
@@ -133,7 +141,7 @@ def plan(root: Path) -> Tuple[List[Change], Optional[str], str]:
     version = project.plugin_version()
     current = project.config(root).get("harness_version")
     if current and parse_version(current) > parse_version(version):
-        raise SystemExit(f"this repository uses replicable-harness {current}, newer than the installed plugin "
+        raise SystemExit(f"this repository uses {project.PLUGIN} {current}, newer than the installed plugin "
                          f"({version}); update the plugin instead")
     today = dt.date.today().isoformat()
     changes: List[Change] = []
@@ -150,31 +158,39 @@ def plan(root: Path) -> Tuple[List[Change], Optional[str], str]:
     for folder in ("decisions", "domain", "raw"):
         if not (root / "wiki" / folder).is_dir():
             want(f"wiki/{folder}/.gitkeep", "", "wiki skeleton", create_only=True)
-    if read(root, "wiki/index.md") is None:
-        pages = wiki.load(root)
-        if new_overview:  # index the overview this run creates
-            page = wiki.Page("overview.md", root / "wiki" / "overview.md", overview)
-            page.meta, page.body_start = wiki.parse_frontmatter(overview)
-            pages.pages.append(page)
-        want("wiki/index.md", wiki.render_index(pages), "generated catalogue", create_only=True)
+    pages = wiki.load(root)
+    if new_overview:  # index the overview this run creates
+        page = wiki.Page("overview.md", root / "wiki" / "overview.md", overview)
+        page.meta, page.body_start = wiki.parse_frontmatter(overview)
+        pages.pages.append(page)
+    # Generated and never edited by hand, so an upgrade regenerates it (its header names the plugin).
+    want("wiki/index.md", wiki.render_index(pages), "generated catalogue")
     want("wiki/.obsidian/app.json", with_obsidian_settings(read(root, "wiki/.obsidian/app.json")),
          "Obsidian creates relative Markdown links")
     want("CLAUDE.md", with_claude_section(read(root, "CLAUDE.md"), root.name), "wiki schema section")
     want(".gitignore", with_gitignore_block(read(root, ".gitignore")), "ignore Obsidian's personal files, graphify's cache")
-    repository = plugin_manifest().get("repository", "https://github.com/replicablelabs/replicable-claude")
+    repository = plugin_manifest().get("repository", "https://github.com/replicablelabs/replicable-plugin")
     want(".github/workflows/wiki.yml", template("wiki-workflow.yml", repository=repository), "CI gate for the wiki")
     for step_version, step in sorted(MIGRATIONS.items(), key=lambda kv: parse_version(kv[0])):
         if current and parse_version(current) < parse_version(step_version) <= parse_version(version):
             changes += step(root, changes)
-    if changes or current != version:
-        want(f".claude/{project.CONFIG_NAME}", with_version(read(root, f".claude/{project.CONFIG_NAME}"), version),
+    config_rel, legacy_rel = f".claude/{project.CONFIG_NAME}", f".claude/{project.LEGACY_CONFIG_NAME}"
+    legacy = read(root, legacy_rel)
+    if changes or current != version or legacy is not None:
+        source = read(root, config_rel)
+        want(config_rel, with_version(root, source if source is not None else legacy, version),
              f"harness_version {current or '(none)'} -> {version}")
+    if legacy is not None:
+        changes.append(Change(legacy_rel, legacy, None, f"renamed to {config_rel}"))
     return changes, current, version
 
 
 def apply(root: Path, changes: List[Change]) -> None:
     for change in changes:
         path = root / change.path
+        if change.new is None:
+            path.unlink(missing_ok=True)
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(change.new, encoding="utf-8")
 
@@ -208,11 +224,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     for line in credential_warnings(root):
         print(line)
     if not changes:
-        print(f"replicable-harness {version}: everything is up to date")
+        print(f"{project.PLUGIN} {version}: everything is up to date")
         return 0
-    print(f"replicable-harness {current or '(not set up)'} -> {version}: {len(changes)} change(s)")
+    print(f"{project.PLUGIN} {current or '(not set up)'} -> {version}: {len(changes)} change(s)")
     for change in changes:
-        print(f"  {'create' if change.old is None else 'update'} {change.path}: {change.why}")
+        print(f"  {change.verb} {change.path}: {change.why}")
     if args.apply:
         apply(root, changes)
         print("applied")

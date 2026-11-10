@@ -21,7 +21,7 @@ class ToolError(Exception):
     pass
 
 
-def tool_harness_info(root: Path, args: dict) -> str:
+def tool_info(root: Path, args: dict) -> str:
     return json.dumps(project.info(root), indent=1)
 
 
@@ -38,7 +38,7 @@ def tool_test_gate(root: Path, args: dict) -> str:
                 path.unlink()
     elif action != "status":
         raise ToolError("action must be on, off or status")
-    command = project.test_command(root) or 'none found: set "test" in .claude/replicable-harness.json'
+    command = project.test_command(root) or f'none found: set "test" in .claude/{project.CONFIG_NAME}'
     return f"test-gate is {'ON' if marker.exists() else 'OFF'}; verification command: {command}"
 
 
@@ -47,7 +47,7 @@ def _schema(props: dict) -> dict:
 
 
 TOOLS: Dict[str, tuple] = {
-    "harness_info": (tool_harness_info, "Plugin and project settings: project root, test command, test-gate state, whether graphify is installed and set up, script locations.",
+    "info": (tool_info, "Plugin and project settings: project root, test command, test-gate state, whether graphify is installed and set up, script locations.",
                      _schema({})),
     "test_gate": (tool_test_gate, "Turn the Stop-hook test gate on/off, or show its status and the project's verification command.",
                   _schema({"action": {"type": "string", "enum": ["on", "off", "status"]}})),
@@ -63,7 +63,7 @@ def handle(root: Path, msg: dict) -> Optional[dict]:
             result = {
                 "protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "harness", "version": project.plugin_version()},
+                "serverInfo": {"name": project.MCP_SERVER, "version": project.plugin_version()},
             }
         elif method == "ping":
             result = {}

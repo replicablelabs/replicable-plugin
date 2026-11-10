@@ -13,8 +13,8 @@ belongs to graphify; never copy it into the wiki.
   `updated` (YYYY-MM-DD). One topic per page, 50-150 lines.
 - **Maintain:** use the `wiki-ingest` skill to record a PR, commits, a note
   or this session's lessons, and `wiki-lint` to verify stale pages against
-  the code. Both use the wiki CLI (`scripts.wiki` in the harness
-  `harness_info` tool): `new`, `index` (never edit `index.md` by hand),
+  the code. Both use the wiki CLI (`scripts.wiki` in the replicable
+  `info` tool): `new`, `index` (never edit `index.md` by hand),
   `covers`, `stale`, `log` and `check`, which must pass before you finish.
 - **Links:** relative Markdown links, `[Invoices](../domain/invoices.md)`,
   never `[[wikilinks]]`. Refer to code by inline path, `` `src/x.py` ``.

@@ -28,14 +28,14 @@ structural.
 ## Distribution and instances
 
 ```
-replicable-claude (this plugin, installed once per developer)
+replicable-plugin (this plugin, installed once per developer)
    skills, hooks, CLI, templates
-        │  /replicable-harness:setup  installs or upgrades
+        │  /replicable:setup  installs or upgrades
         ▼
 each project repository (committed with the project)
    CLAUDE.md                            graphify section + wiki schema section
    .claude/settings.json                plugin enabled for the team + graphify's hooks
-   .claude/replicable-harness.json      test command, harness_version
+   .claude/replicable.json      test command, harness_version
    wiki/                                this wiki
    graphify-out/                        graphify's structure graph
 ```
@@ -186,7 +186,7 @@ plain tools can parse:
 
 A standard-library Python script in the plugin, run as
 `python3 <plugin>/harness/wiki.py <command>`. Skills get the path from
-`harness_info`; hooks and CI call it directly.
+the `info` tool; hooks and CI call it directly.
 
 | Command | Does |
 | --- | --- |
@@ -240,7 +240,7 @@ save a reminder, which the SessionStart hook above already covers.
 
 ## Setup and upgrades
 
-`/replicable-harness:setup` creates or upgrades, after showing a diff and
+`/replicable:setup` creates or upgrades, after showing a diff and
 asking. It runs `harness/scaffold.py`, which prints the plan and diffs by
 default and writes only with `--apply`:
 
@@ -248,10 +248,10 @@ default and writes only with `--apply`:
 | --- | --- | --- |
 | `wiki/` skeleton: `overview.md`, `log.md`, `index.md`, `decisions/`, `domain/`, `raw/` (each folder with a `.gitkeep`) | When missing | Never touched |
 | `wiki/.obsidian/app.json` | When missing | The three link keys are set; any other keys Obsidian wrote are kept |
-| `CLAUDE.md` schema section between `<!-- replicable-harness:wiki v1 -->` and `<!-- /replicable-harness:wiki -->` (template: `harness/templates/claude-wiki-section.md`) | Appended, or a new `CLAUDE.md` | Content between the markers replaced |
-| `.gitignore` block between `# replicable-harness (managed)` and `# /replicable-harness` (Obsidian's personal files, `graphify-out/cache/`) | Appended | Block replaced |
+| `CLAUDE.md` schema section between `<!-- replicable:wiki v2 -->` and `<!-- /replicable:wiki -->` (template: `harness/templates/claude-wiki-section.md`) | Appended, or a new `CLAUDE.md` | Content between the markers replaced |
+| `.gitignore` block between `# replicable (managed)` and `# /replicable` (Obsidian's personal files, `graphify-out/cache/`) | Appended | Block replaced |
 | `.github/workflows/wiki.yml` (see [CI](#ci)) | Yes | Replaced: the plugin owns it |
-| `harness_version` in `.claude/replicable-harness.json` | Yes | Set to the plugin's version; other keys kept |
+| `harness_version` in `.claude/replicable.json` | Yes | Set to the plugin's version; other keys kept |
 
 Upgrades compare the repository's `harness_version` with the plugin's
 version (`.claude-plugin/plugin.json`), and refuse when the repository is

@@ -240,7 +240,7 @@ def load(root: Path) -> Wiki:
 
 def render_index(wiki: Wiki) -> str:
     out = ["# Index", "",
-           "<!-- Generated from page frontmatter by the replicable-harness wiki CLI (`wiki.py index`). "
+           "<!-- Generated from page frontmatter by the replicable wiki CLI (`wiki.py index`). "
            "Do not edit by hand. -->", ""]
     for type_, (heading, _) in TYPES.items():
         group = sorted((p for p in wiki.pages if p.valid_for_index and p.meta["type"] == type_), key=lambda p: p.rel)

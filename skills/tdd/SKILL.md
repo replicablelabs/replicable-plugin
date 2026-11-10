@@ -17,5 +17,5 @@ Behaviour: $ARGUMENTS
 5. Implement the smallest change that makes them pass. Do not modify the
    tests; if a test is wrong, stop and explain why.
 6. Iterate: run → read failure → fix, until green. Then run the full suite.
-7. Optionally turn on the Stop-hook gate (`/replicable-harness:test-gate on`)
+7. Optionally turn on the Stop-hook gate (`/replicable:test-gate on`)
    so you cannot end the turn while tests are red.

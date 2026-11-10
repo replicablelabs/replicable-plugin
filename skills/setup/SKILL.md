@@ -1,12 +1,12 @@
 ---
 name: setup
-description: Set up or upgrade replicable-harness for this project. Installs graphify's own Claude Code integration (CLAUDE.md rules + PreToolUse search/read hooks), builds the code graph locally, records the test command, and creates or upgrades the project wiki (skeleton, CLAUDE.md schema section, Obsidian settings, CI check, harness_version).
+description: Set up or upgrade replicable for this project. Installs graphify's own Claude Code integration (CLAUDE.md rules + PreToolUse search/read hooks), builds the code graph locally, records the test command, and creates or upgrades the project wiki (skeleton, CLAUDE.md schema section, Obsidian settings, CI check, harness_version).
 disable-model-invocation: true
 ---
 
 # Set up the harness for this project
 
-1. Call the harness `harness_info` tool and show the user the result in
+1. Call the replicable `info` tool and show the user the result in
    4-6 lines: project root, detected test command, test gate, and the
    `graphify` block.
 2. If `graphify.cli` is null, stop and give the user the install command
@@ -20,7 +20,7 @@ disable-model-invocation: true
    the `/graphify` skill's full extraction unless the user asks: that pass
    sends documents and images to an LLM backend.
 5. If `test_command` is null or wrong, ask the user for the right command
-   and write it to `.claude/replicable-harness.json` as `{"test": "..."}`.
+   and write it to `.claude/replicable.json` as `{"test": "..."}`.
 6. Optionally offer `graphify hook install` (rebuilds the graph on commit and
    checkout).
 7. Wiki and upgrades: run `python3 <scripts.scaffold>` (a dry run: it writes
@@ -34,4 +34,4 @@ disable-model-invocation: true
    files and marked sections are.
 8. Finish with one line saying what changed, and that the new files
    (`wiki/`, `CLAUDE.md`, `.gitignore`, `.github/workflows/wiki.yml`,
-   `.claude/replicable-harness.json`) are meant to be committed.
+   `.claude/replicable.json`) are meant to be committed.

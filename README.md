@@ -1,4 +1,4 @@
-# replicable-harness
+# replicable
 
 **A Claude Code plugin that adds verification and loops to the agent harness,
 built on [graphify](https://github.com/Graphify-Labs/graphify)'s code graph.**
@@ -55,18 +55,18 @@ The PyPI package is `graphifyy` (double y); the command is `graphify`.
 **2. Install the plugin** from inside Claude Code:
 
 ```
-/plugin marketplace add replicablelabs/replicable-claude
-/plugin install replicable-harness@replicablelabs
+/plugin marketplace add replicablelabs/replicable-plugin
+/plugin install replicable@replicablelabs
 ```
 
 Or try it for a single session without installing:
 
 ```bash
-git clone https://github.com/replicablelabs/replicable-claude ~/replicable-claude
-cd your-project && claude --plugin-dir ~/replicable-claude
+git clone https://github.com/replicablelabs/replicable-plugin ~/replicable-plugin
+cd your-project && claude --plugin-dir ~/replicable-plugin
 ```
 
-**3. Set up each project** with `/replicable-harness:setup`. It shows the
+**3. Set up each project** with `/replicable:setup`. It shows the
 detected settings, runs graphify's own Claude Code installer once you approve
 (that writes to `CLAUDE.md` and `.claude/settings.json`), builds the graph and
 records the test command.
@@ -77,9 +77,9 @@ project's `.claude/settings.json`:
 ```json
 {
   "extraKnownMarketplaces": {
-    "replicablelabs": { "source": { "source": "github", "repo": "replicablelabs/replicable-claude" } }
+    "replicablelabs": { "source": { "source": "github", "repo": "replicablelabs/replicable-plugin" } }
   },
-  "enabledPlugins": { "replicable-harness@replicablelabs": true }
+  "enabledPlugins": { "replicable@replicablelabs": true }
 }
 ```
 
@@ -94,7 +94,7 @@ code-only commands unless you've decided that's acceptable.
 ## Configure (optional)
 
 The test command is detected automatically. To override it, commit
-`.claude/replicable-harness.json`:
+`.claude/replicable.json`:
 
 ```json
 { "test": "pnpm test --filter=api" }
@@ -106,16 +106,16 @@ the project's `.venv` if present). To keep files out of the graph, use
 graphify's `.graphifyignore`.
 
 The plugin's own state (test-gate markers, loop worktrees and progress notes)
-lives in `$XDG_CACHE_HOME/replicable-harness/<project>-<hash>/` (default
-`~/.cache/...`). The graph is graphify's, in `graphify-out/`. Ask Claude for
-`harness_info` to see the resolved settings.
+lives in `$XDG_CACHE_HOME/replicable/<project>-<hash>/` (default
+`~/.cache/...`). The graph is graphify's, in `graphify-out/`. Ask Claude to call
+the plugin's `info` tool to see the resolved settings.
 
 Environment overrides: `HARNESS_ROOT`, `HARNESS_DATA`, `GRAPHIFY_BIN`,
 `LAB_TEST_CMD`, `LAB_TEST_GATE=1`, `LAB_TEST_GATE_MAX`.
 
 ## Use
 
-Skills are namespaced, so type `/replicable-harness:` to list them.
+Skills are namespaced, so type `/replicable:` to list them.
 
 **Ask structural questions.** Graphify's rules steer Claude to `graphify query
 "…"`, `graphify path A B` and `graphify explain X` before it greps or reads
@@ -123,13 +123,13 @@ files.
 
 **Use the verification loop.** After any edit, the PostToolUse hook re-indexes
 the graph and adds the affected symbols and tests to Claude's context.
-`/replicable-harness:test-gate on` keeps Claude working until the suite is
+`/replicable:test-gate on` keeps Claude working until the suite is
 green, up to 3 attempts.
 
 **Recommended workflows:**
-- `/replicable-harness:epcc <task>`: explore, plan, code, commit. Start in
+- `/replicable:epcc <task>`: explore, plan, code, commit. Start in
   plan mode (Shift+Tab) for risky changes.
-- `/replicable-harness:tdd <behaviour>`: tests first, committed before the
+- `/replicable:tdd <behaviour>`: tests first, committed before the
   implementation.
 - **Writer / reviewer:** `claude -w feature-x` to write, then a fresh session
   with *"use the reviewer agent on branch worktree-feature-x"*.
@@ -138,8 +138,8 @@ green, up to 3 attempts.
 
 | Loop | Use it to | How |
 | --- | --- | --- |
-| Stop hook | Keep Claude working while the tests are red | `/replicable-harness:test-gate on` |
-| Headless "Ralph" loop | Work toward a long, well-specified goal | `/replicable-harness:headless-loop <goal>` (explains the command and asks before running) |
+| Stop hook | Keep Claude working while the tests are red | `/replicable:test-gate on` |
+| Headless "Ralph" loop | Work toward a long, well-specified goal | `/replicable:headless-loop <goal>` (explains the command and asks before running) |
 | Graph freshness | Keep the graph current outside Claude sessions | Graphify's `graphify hook install` (on commit and checkout) or `graphify watch` |
 | `/loop` and routines | Recurring checks | e.g. `/loop 30m run graphify god-nodes and tell me if the top hubs changed` |
 

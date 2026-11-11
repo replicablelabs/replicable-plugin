@@ -173,6 +173,7 @@ without running it.
 - [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of hooks (implemented and proposed), and hooks that call LLMs
 - [Project wiki](docs/wiki.md): a Karpathy-style intent wiki per project, maintained by Claude Code and readable in Obsidian (CLI, setup, skills and hooks implemented; trial next)
 - [Benchmarking the harness](docs/benchmarking.md): tasks on a pinned commit run with no plugin, the previous release and the candidate; every run recorded, with time and tokens per skill, tool and hook, failure labels, experiment records and a dashboard
+- [Stages and universal skills](docs/stages-and-skills.md): the staged harness (Understand, Plan, Build, Verify, Deliver), every universal skill, the plan's measured estimate and route, and validated handoffs (design, for review)
 
 ## Develop
 

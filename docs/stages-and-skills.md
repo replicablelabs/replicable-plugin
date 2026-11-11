@@ -13,13 +13,14 @@ invocation is a measured span with a recorded outcome, and stages hand over
 through a **validated handoff** instead of a growing transcript.
 
 - [Stages](#stages)
+- [How the user works with the harness](#how-the-user-works-with-the-harness)
 - [Anatomy of a skill](#anatomy-of-a-skill)
 - [Which skills each stage allows](#which-skills-each-stage-allows)
 - [The skills](#the-skills)
 - [The plan's estimate and route](#the-plans-estimate-and-route)
 - [Transitions, loops and caps](#transitions-loops-and-caps)
 - [Handoffs](#handoffs)
-- [Project slots and bundles](#project-slots-and-bundles)
+- [Project slots and the project's skills](#project-slots-and-the-projects-skills)
 - [Mechanisms (confirmed in Claude Code's docs)](#mechanisms-confirmed-in-claude-codes-docs)
 - [What gets measured](#what-gets-measured)
 - [Existing skills, agents and hooks](#existing-skills-agents-and-hooks)
@@ -40,7 +41,7 @@ issue ─► Understand ─► Plan ─► Execution ─────────
 | **Plan** | Headless, always | The refined issue, the code graph | A plan comment on the issue: units, files, tests, checks, the measured estimate and the route, in a `replicable-execution` block | **The route**, and nothing else about execution |
 | **Build** | Headless | The plan (and Verify's findings when sent back) | A change in the worktree that the unit checks pass | How each unit is implemented |
 | **Verify** | Headless | The whole change, the spec | A verdict: every acceptance criterion met, or findings for Build | Whether the change is done |
-| **Deliver** | Headless | The verified change | Commits on the work branch; project bundles' results | How the change is recorded |
+| **Deliver** | Headless | The verified change | Commits on the work branch; the results of any project skills it ran | How the change is recorded |
 | **Learn** | Optional, after delivery | The session traces | Proposals: new skills, slots, wiki entries. A human approves each | What to improve |
 
 Single-stage runs Build, Verify and Deliver's skills in one session. Multi-stage
@@ -50,6 +51,37 @@ diverges from the plan's estimate ([signals](#re-route-and-escalation)).
 
 Two continuity skills, `handoff` and `status`, are available in every
 headless stage.
+
+## How the user works with the harness
+
+```
+/replicable:refine 123   (interactive; from a shell: claude "/replicable:refine 123")
+   refine with the user ─► spec on the issue ─► the runner starts, detached
+                                                       │
+            Plan ─► Execution   (headless)             │
+                                                       ▼
+   questions and results ─► the issue (always) and the refine session (while it is open)
+```
+
+- **One entry point.** `/replicable:refine <issue>` is a user-only skill that
+  runs Understand with the user. When the user approves the spec, it writes
+  the spec to the issue and starts the runner for that issue, **detached**,
+  so closing the session or the terminal does not stop the run. All the
+  run's state is on disk (handoffs, check records), never in a session.
+- **The runner never waits on a person.** When it needs an answer (a gap
+  Plan found, a cap hit, an escalation), it stops the run and writes the
+  question into the handoff.
+- **The issue is the durable channel.** Every question, and the final result
+  (the branch, or the PR when the runner delivers), is posted as a comment,
+  so GitHub's notifications reach the user wherever they are.
+- **The refine session is the live channel.** While it is open, it watches
+  the runner's event log and surfaces each question there; the user answers
+  in place.
+- **Answering later.** `/replicable:resume <issue>`, in any session, reads the
+  open question, discusses it with the user, records the answer, and
+  restarts the run from its last handoff.
+- **The benchmark runs the same headless path** with no session at all;
+  questions go to a file.
 
 ## Anatomy of a skill
 
@@ -63,10 +95,10 @@ Every universal skill is defined by six fields. U3 writes them into each
 | **Actions** | What it may do, from the [action classes](#action-classes). Anything else is outside its boundary |
 | **Exit check** | How success is decided, and by whom: **(M)** mechanical, checked by a hook, an MCP tool or the runner against recorded facts; **(J)** judgement, the skill's own self-check, recorded as such |
 | **Report** | The fields it ends with. A report is the skill's outcome as data: it ends the skill's span and feeds the handoff |
-| **Slots** | The project-specific values it reads ([slots](#project-slots-and-bundles)) |
+| **Slots** | The project-specific values it reads ([slots](#project-slots-and-the-projects-skills)) |
 
 Skills are universal: no project names, paths or commands in them. Anything
-project-specific is a slot or a project bundle.
+project-specific is a slot, or one of the project's own skills.
 
 ### Action classes
 
@@ -115,13 +147,13 @@ trace (when on) only records.
 | `status` | ● | ● | ● | ● | ● | ● | ● |
 | `retrospect` | | | | | | | ● |
 | `wiki-ingest` (existing) | | | | | ● | ● | ● |
-| Project bundles | per bundle | | per bundle | per bundle | per bundle | per bundle | |
+| The project's own skills | ● | ● | ● | ● | ● | ● | |
 
 ○ = proposed addition ([D5](#decisions-for-review)). Each headless session
-sees only its own stage's column ([how](#how-a-stage-gets-its-skills)). A
-project can add its own skills to stages as bundles
-([slots](#project-slots-and-bundles)), but cannot disable or replace a
-universal skill.
+sees only its own stage's universal skills ([how](#how-a-stage-gets-its-skills)).
+The project's own skills are visible in every stage unless they name their
+stages ([the project's skills](#the-projects-own-skills)); they cannot disable
+or replace a universal skill.
 
 ### How a stage gets its skills
 
@@ -133,14 +165,15 @@ column allows.
 | Where | What |
 | --- | --- |
 | **The installed plugin** (`replicable`) | Understand's skills (`assess-task`, `explore-code`, `write-spec`), the skills that exist today, the hooks and the MCP server. The stage hook and the `check`, `report` and `handoff` tools do nothing unless `REPLICABLE_STAGE` is set |
-| **A per-stage plugin the runner assembles** | A copy of the stage's other universal skills, plus the project bundles assigned to the stage. It is loaded with a second `--plugin-dir` (repeatable; checked on Claude Code 2.1.322) under a fixed name, so skill names are the same in every run. Skills the installed plugin already has, such as `explore-code` in Plan, are used from it, not copied |
+| **A per-stage plugin the runner assembles** | A copy of the stage's other universal skills. It is loaded with a second `--plugin-dir` (repeatable; checked on Claude Code 2.1.322) under a fixed name, so skill names are the same in every run. Skills the installed plugin already has, such as `explore-code` in Plan, are used from it, not copied |
 | **The universal skills' sources** | In this repository (`stages/skills/`), outside the `skills/` directory the plugin loads, so installing the plugin never lists them |
 
-The project's own skills (`.claude/skills/`) load in every session, so the
-runner hides the ones the stage does not allow with `skillOverrides` through
-`--settings`, which works for project skills (not for plugin skills). The
-stage hook still checks every `Skill` call against the stage's list and
-traces it. It also covers the installed plugin's own skills (`epcc`, `tdd`,
+The project's own skills load from the repository as they always do
+([the project's skills](#the-projects-own-skills)). The runner hides only the
+ones that name other stages: project skills with `skillOverrides` through
+`--settings`, and skills of plugins the repository enables with permission
+deny rules, because `skillOverrides` does not apply to plugin skills. The
+stage hook still checks every `Skill` call and traces it. It also covers the installed plugin's own skills (`epcc`, `tdd`,
 the wiki skills), which stay listed because that plugin is loaded for its
 hooks and MCP server.
 
@@ -281,10 +314,10 @@ comment (U5); the agent never writes to the issue.
 - **Report.** `commits` (sha, subject), `branch`.
 - **Slots.** `commit` (style, issue reference), `branch`.
 
-Project bundles extend Deliver (and the other execution stages) with project
+The project's own skills extend Deliver and the other stages with project
 operations: a local release build, a migration check, a preview environment.
-Bundles never push or deploy to shared environments: the runner does that,
-with the project's environment commands (U9).
+They never push or deploy to shared environments: the runner does that, with
+the project's environment commands (U9).
 
 ### Continuity (every headless stage)
 
@@ -379,7 +412,7 @@ Build, per unit:
                                               └──────────────────── loop ────────────────────┘
 Verify:  run-checks ─► review-change ─┬─► handoff ─► Deliver           (pass)
                                       └─► handoff ─► Build            (changes needed: backward jump)
-Deliver: commit-change ─► [bundles] ─► handoff ─► done
+Deliver: commit-change ─► [project skills] ─► handoff ─► done
 ```
 
 Caps (defaults in the `caps` slot, to be tuned by the benchmark). When a
@@ -461,7 +494,7 @@ claim it could check.
 | **Build → Verify** | `units` (id, status `done` or `blocked`, files changed, check records), `claims` (criterion → evidence) |
 | **Verify → Build** | `findings`, failing records, `reopen` (unit ids) |
 | **Verify → Deliver** | `verdict: pass`, `criteria` (all met, with evidence), the `full` record for `git.tree` |
-| **Deliver → done** | `commits`, `bundles` (skill, status, record) |
+| **Deliver → done** | `commits`, and the project skills it ran (`project_skills`: skill, status) |
 | **Single-stage → done** | Build's, Verify's and Deliver's fields together |
 
 ### Validation by the runner
@@ -488,7 +521,7 @@ diff stat from the base, the failing records, `graphify affected` for the
 changed files, the budget left). It is capped (8,000 characters by default);
 the rest is given as paths.
 
-## Project slots and bundles
+## Project slots and the project's skills
 
 All of it lives in `.claude/replicable.json`, resolved by `harness/project.py`
 and served to skills by the `info` tool. Every slot has a default, so a
@@ -510,10 +543,7 @@ project with no config still runs. Proposed shape (U3 fixes it):
   "branch": "replicable/{issue}-{slug}",
   "review": {"guide": "CONTRIBUTING.md"},
   "environments": {"compose": {"up": "docker compose up -d --wait", "down": "docker compose down -v"}},
-  "install": null,
-  "skills": {
-    "bundles": {"release-build": {"skills": ["build-wheel"], "stages": ["deliver"]}}
-  }
+  "install": null
 }
 ```
 
@@ -530,22 +560,44 @@ project with no config still runs. Proposed shape (U3 fixes it):
 | `install` | `implement-unit` | None: no dependency installs |
 | `spec.template` | `write-spec`, the gate | The plugin's template (U2) |
 | `tracker` | `assess-task`, `write-spec`, the runner | GitHub through `gh` |
-| `skills.bundles` | The runner, the stage hook | No bundles |
 
-A **bundle** is a set of the project's own skills (in `.claude/skills/` or a
-project plugin) assigned to stages. Bundles hold what is specific to one
-project: local environments, release builds, deploy previews.
+### The project's own skills
 
-Bundles are a feature the harness offers, not part of what it guarantees:
-the project owns them. They report through the same `report` tool, so their
-spans appear in the run's trace and in `analyze-session`, but the benchmark
-never runs them. It measures the harness as shipped, and its harness arm
-runs with no bundles. Bundles cannot reuse a universal skill's name, and they
-never get credentials for shared environments.
+The project extends the harness with its own skills, for what is specific
+to it: local environments, release builds, deploy previews, the house way to
+add a migration. Nothing in the plugin's config lists them.
 
-**The universal skills cannot be disabled or replaced.** A project adapts
-them through slots only. That keeps every staged run on the harness we
-guarantee, plus the project's additions.
+- **They come from the repository:** `.claude/skills/`, and the plugins the
+  repository enables in its committed `.claude/settings.json` (each installed
+  once per clone; readiness flags one that is not). Personal skills and
+  plugins (`~/.claude/`) never reach a headless run: the runner starts
+  Claude Code with `--setting-sources project`, so a teammate, CI and the
+  benchmark get the same run.
+- **The agent chooses them by description,** as with any skill. They are
+  visible in every headless stage. A skill meant for some stages only says
+  so in its own frontmatter, and the runner hides it elsewhere. Claude Code
+  passes `metadata` through without acting on it:
+
+  ```yaml
+  metadata:
+    replicable:
+      stages: [deliver]
+  ```
+
+- **Safety does not depend on the choice.** The headless rules (never push,
+  never write through `gh`, never deploy) are permission rules, applied
+  whichever skill runs.
+- **Supported, not guaranteed.** Their calls are traced like any skill call,
+  so they appear in the run's record and in `analyze-session`; one that ends
+  with the `report` tool also gets an exact span end and outcome. The
+  benchmark never runs them: it measures the harness as shipped, and its
+  datasets are assumed to carry no project skills.
+- **Same names do not override.** Plugin skills are namespaced, so a project
+  skill named like a universal one loads beside it and replaces nothing.
+  Readiness flags the collision, and in staged runs the stage hook denies the
+  project's one. The universal skills cannot be disabled or replaced; a
+  project adapts them through slots. That keeps every staged run on the
+  harness we guarantee, plus the project's additions.
 
 ## Mechanisms (confirmed in Claude Code's docs)
 
@@ -559,6 +611,7 @@ and against the transcripts of real sessions on this machine.
 | What bypasses it? | Typing `/name` "bypasses `PreToolUse`"; `UserPromptExpansion` fires on that path instead, matched on the command name | Headless stage prompts never start with a slash command. Interactive sessions are unrestricted; a `UserPromptExpansion` hook records slash-command starts for the trace |
 | How does `disable-model-invocation` interact with in-stage invocation? | `true` removes the skill's description from Claude's context, and "if Claude tries anyway, Claude Code blocks the call"; it also blocks preloading into subagents | Universal skills must leave it `false`: the agent picks them itself. It stays on user-only skills (`setup`, `test-gate`, `headless-loop`). Stage restriction comes from the hook, not from this field |
 | Can settings hide plugin skills per stage? | No: "plugin skills are not affected by `skillOverrides`". Project skills are | A plugin's skills are listed in every session that loads it, so the universal skills are not installed for interactive use: the runner gives each stage its own ([how](#how-a-stage-gets-its-skills)), and hides out-of-stage project skills with `skillOverrides`. Permission rules (`Skill(name)` allow and deny) apply to both, as a second layer |
+| Which plugins and skills does a headless run load? | `claude -p` loads installed plugins. A repository enables plugins for its team in its committed `.claude/settings.json`; each collaborator installs them once per clone. Plugin skills are namespaced, so a same-named skill elsewhere "both load" | The project's skills come from the repository; same names never override a universal skill ([the project's skills](#the-projects-own-skills)) |
 | Can a session load more than one plugin directory? | Yes: `--plugin-dir` is repeatable, and a folder of plugins loads each child (`claude --help`, 2.1.322) | The installed plugin and the runner's per-stage plugin load side by side |
 | Which fields carry the ids the trace needs? | Every hook gets `session_id`, `transcript_path`, `cwd`, `hook_event_name`, and `prompt_id` after the first input; PreToolUse and PostToolUse add `tool_name`, `tool_input` and `tool_use_id`; inside a subagent, `agent_id` and `agent_type` | The trace keys each row by `session_id` and `tool_use_id` (as it does today) and adds `agent_id`, so a skill invoked inside a subagent is attributed to it |
 | Can a skill restrict its own tools? | `allowed-tools` only pre-approves ("it does not restrict which tools are available"). `disallowed-tools` removes tools "while this skill is active", and clears on the user's next message | Per-skill boundaries: the hooks record first ([D7](#decisions-for-review)). `disallowed-tools` is a native candidate, but when it clears in a headless session that invokes several skills must be tested in U4 |
@@ -599,7 +652,7 @@ Each has a recommendation; the maintainer decides before U3.
 
 | # | Decision | Options | Recommendation |
 | --- | --- | --- | --- |
-| D1 | **Where the universal skills ship.** `skillOverrides` cannot hide plugin skills, so installed skills are listed in every session | — | **Decided:** Understand's skills in the installed plugin; every other universal skill only in the per-stage plugin the runner assembles ([how](#how-a-stage-gets-its-skills)). Project bundles are supported, not benchmarked; universal skills are not overridable |
+| D1 | **Where the universal skills ship.** `skillOverrides` cannot hide plugin skills, so installed skills are listed in every session | — | **Decided:** Understand's skills in the installed plugin; every other universal skill only in the per-stage plugin the runner assembles ([how](#how-a-stage-gets-its-skills)). The project's own skills come from the repository and are supported, not benchmarked; universal skills are not overridable |
 | D2 | **Who pushes and opens the PR** | A Deliver skill; the runner | The runner. The agent never needs push or `gh` write access, and the benchmark already denies both |
 | D3 | **Commits during Build** | The agent commits as it goes; the runner checkpoints at each handoff and `commit-change` rewrites the run's checkpoints into final commits | Runner checkpoints. Verify then reviews a fixed tree, and `commit-change` only touches this run's commits |
 | D4 | **Build granularity in multi-stage** | One session for all units; one session per unit | One per unit: small contexts, and per-unit cost and iterations |

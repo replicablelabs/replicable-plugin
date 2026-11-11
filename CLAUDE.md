@@ -15,7 +15,10 @@ project.
 - Dogfood on this repo: `claude --plugin-dir .`
 - Project wiki CLI (design: `docs/wiki.md`): `python3 harness/wiki.py --root <project> check|index|stale|covers|log|new`
 - Per-project setup and upgrades (dry run; `--apply` writes): `python3 harness/scaffold.py --root <project>`
-- Releases: bump `version` in `.claude-plugin/plugin.json` and tag `v<version>`; projects' wiki CI clones that tag
+- Benchmark (design: `docs/benchmarking.md`): `python3 bench/run.py run|report|validate|new-experiment|label --suite <suite dir>`;
+  suites live in their own (private) repositories, never in this one
+- Releases: run the benchmark's `release` tier and write the experiment record, then bump `version` in
+  `.claude-plugin/plugin.json` and tag `v<version>`; projects' wiki CI clones that tag
 
 ## Rules
 
@@ -33,4 +36,7 @@ project.
 - Hooks must be fast, exit 0 on anything unexpected, and never print secrets.
   A Stop hook that blocks must have a retry cap.
 - Skills reach plugin scripts through the `info` tool of the plugin's MCP server, not paths.
-- Every behaviour change gets a test in `tests/test_harness.py`.
+- Every behaviour change gets a test in `tests/test_harness.py` (plugin) or
+  `tests/test_bench.py` (benchmark runner).
+- `bench/` measures the plugin and is not part of it: hooks, skills and the MCP
+  server never import it. Never commit a dataset's tasks, transcripts or results here.

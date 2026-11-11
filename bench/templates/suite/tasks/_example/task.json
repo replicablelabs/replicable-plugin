@@ -1,0 +1,11 @@
+{
+  "id": "_example",
+  "version": 1,
+  "tags": ["example"],
+  "skill": "epcc",
+  "fail_to_pass": ["tests/test_new_behaviour.py"],
+  "pass_to_pass": ["tests/test_existing.py"],
+  "test_command": null,
+  "setup": [],
+  "delivery": []
+}

@@ -1,0 +1,29 @@
+{
+  "name": "{name}",
+  "dataset": {
+    "repo": "{repo}",
+    "sha": "{sha}",
+    "setup": []
+  },
+  "defaults": {
+    "model": null,
+    "effort": null,
+    "trials": 3,
+    "budget_usd": 5.0,
+    "timeout_s": 1800,
+    "permission_mode": "acceptEdits",
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+    "disallowed_tools": [],
+    "skill": "epcc",
+    "test_command": null,
+    "harness_test_command": null,
+    "grade_timeout_s": 900,
+    "env": {}
+  },
+  "arms": {},
+  "tiers": {},
+  "delivery": {
+    "build": [],
+    "suites": {}
+  }
+}

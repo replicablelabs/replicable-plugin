@@ -4,17 +4,19 @@ At most a few lines. Silent when nothing is pending, the project has no wiki,
 or anything unexpected happens.
 """
 
-from _common import ROOT, context, read_event
+from _common import ROOT, context, read_event, trace
 
 MAX_PAGES = 5
 
+error = None
 try:
     import _wiki_flags as flags
 
     read_event()
-    pending = flags.pending() if (ROOT / "wiki").is_dir() else {}
-except Exception:
-    pending = {}
+    has_wiki = (ROOT / "wiki").is_dir()
+    pending = flags.pending() if has_wiki else {}
+except Exception as exc:
+    has_wiki, pending, error = None, {}, type(exc).__name__
 
 if pending:
     items = sorted(pending.items())
@@ -26,4 +28,10 @@ if pending:
         lines.append(f"- ... and {len(items) - MAX_PAGES} more")
     lines.append("Mention this to the user once and offer /replicable:wiki-lint (or wiki-ingest for "
                  "the change that touched them).")
-    context("SessionStart", "\n".join(lines))
+    text = "\n".join(lines)
+    context("SessionStart", text)
+    trace("context", "pending", pages=len(items), chars=len(text))
+elif error:
+    trace("error", f"exception:{error}")
+else:
+    trace("skip", "nothing_pending" if has_wiki else "no_wiki")

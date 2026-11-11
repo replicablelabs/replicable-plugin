@@ -1,0 +1,4 @@
+# Raw run artifacts (transcripts, patches, logs) live in the bench cache, never here.
+runs/
+*.tmp
+.DS_Store

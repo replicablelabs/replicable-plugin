@@ -111,7 +111,9 @@ lives in `$XDG_CACHE_HOME/replicable/<project>-<hash>/` (default
 the plugin's `info` tool to see the resolved settings.
 
 Environment overrides: `HARNESS_ROOT`, `HARNESS_DATA`, `GRAPHIFY_BIN`,
-`LAB_TEST_CMD`, `LAB_TEST_GATE=1`, `LAB_TEST_GATE_MAX`.
+`LAB_TEST_CMD`, `LAB_TEST_GATE=1`, `LAB_TEST_GATE_MAX`, and `REPLICABLE_TRACE`
+(`1` or a file path: one JSON line per hook run with its decision and a reason
+code, never output; used by the [benchmark](docs/benchmarking.md)).
 
 ## Use
 
@@ -170,6 +172,7 @@ without running it.
 - [Harness engineering](docs/harness-engineering.md): harness layers, inner and outer loops, loop engineering, and the code graph, wiki and plan graph
 - [Hooks for coding agents](docs/hooks.md): metrics, practices, a catalogue of hooks (implemented and proposed), and hooks that call LLMs
 - [Project wiki](docs/wiki.md): a Karpathy-style intent wiki per project, maintained by Claude Code and readable in Obsidian (CLI, setup, skills and hooks implemented; trial next)
+- [Benchmarking the harness](docs/benchmarking.md): tasks on a pinned commit run with no plugin, the previous release and the candidate; every run recorded, with time and tokens per skill, tool and hook, failure labels, experiment records and a dashboard
 
 ## Develop
 

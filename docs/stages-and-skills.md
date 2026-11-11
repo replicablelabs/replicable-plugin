@@ -117,9 +117,36 @@ trace (when on) only records.
 | `wiki-ingest` (existing) | | | | | ● | ● | ● |
 | Project bundles | per bundle | | per bundle | per bundle | per bundle | per bundle | |
 
-○ = proposed addition ([D5](#decisions-for-review)). A project can disable a
-universal skill or add a bundle to stages through `.claude/replicable.json`
-([slots](#project-slots-and-bundles)).
+○ = proposed addition ([D5](#decisions-for-review)). Each headless session
+sees only its own stage's column ([how](#how-a-stage-gets-its-skills)). A
+project can add its own skills to stages as bundles
+([slots](#project-slots-and-bundles)), but cannot disable or replace a
+universal skill.
+
+### How a stage gets its skills
+
+Only Understand is interactive, so only Understand's skills are installed
+for interactive use. Every other universal skill reaches a session only
+through the runner, which gives each headless stage exactly the skills its
+column allows.
+
+| Where | What |
+| --- | --- |
+| **The installed plugin** (`replicable`) | Understand's skills (`assess-task`, `explore-code`, `write-spec`), the skills that exist today, the hooks and the MCP server. The stage hook and the `check`, `report` and `handoff` tools do nothing unless `REPLICABLE_STAGE` is set |
+| **A per-stage plugin the runner assembles** | A copy of the stage's other universal skills, plus the project bundles assigned to the stage. It is loaded with a second `--plugin-dir` (repeatable; checked on Claude Code 2.1.322) under a fixed name, so skill names are the same in every run. Skills the installed plugin already has, such as `explore-code` in Plan, are used from it, not copied |
+| **The universal skills' sources** | In this repository (`stages/skills/`), outside the `skills/` directory the plugin loads, so installing the plugin never lists them |
+
+The project's own skills (`.claude/skills/`) load in every session, so the
+runner hides the ones the stage does not allow with `skillOverrides` through
+`--settings`, which works for project skills (not for plugin skills). The
+stage hook still checks every `Skill` call against the stage's list and
+traces it. It also covers the installed plugin's own skills (`epcc`, `tdd`,
+the wiki skills), which stay listed because that plugin is loaded for its
+hooks and MCP server.
+
+To verify in U4 and U6: that a copied skill tree loads (plugin paths may not
+leave the plugin's directory, so the runner copies rather than links), and
+that hiding project skills through `--settings` works in headless sessions.
 
 ## The skills
 
@@ -485,7 +512,6 @@ project with no config still runs. Proposed shape (U3 fixes it):
   "environments": {"compose": {"up": "docker compose up -d --wait", "down": "docker compose down -v"}},
   "install": null,
   "skills": {
-    "disable": ["write-tests"],
     "bundles": {"release-build": {"skills": ["build-wheel"], "stages": ["deliver"]}}
   }
 }
@@ -504,14 +530,22 @@ project with no config still runs. Proposed shape (U3 fixes it):
 | `install` | `implement-unit` | None: no dependency installs |
 | `spec.template` | `write-spec`, the gate | The plugin's template (U2) |
 | `tracker` | `assess-task`, `write-spec`, the runner | GitHub through `gh` |
-| `skills` | The stage hook | Every universal skill on, no bundles |
+| `skills.bundles` | The runner, the stage hook | No bundles |
 
 A **bundle** is a set of the project's own skills (in `.claude/skills/` or a
 project plugin) assigned to stages. Bundles hold what is specific to one
-project: local environments, release builds, deploy previews. They follow
-the same anatomy and report through the same tool, so they are measured like
-universal skills. They cannot reuse a universal skill's name, and they never
-get credentials for shared environments.
+project: local environments, release builds, deploy previews.
+
+Bundles are a feature the harness offers, not part of what it guarantees:
+the project owns them. They report through the same `report` tool, so their
+spans appear in the run's trace and in `analyze-session`, but the benchmark
+never runs them. It measures the harness as shipped, and its harness arm
+runs with no bundles. Bundles cannot reuse a universal skill's name, and they
+never get credentials for shared environments.
+
+**The universal skills cannot be disabled or replaced.** A project adapts
+them through slots only. That keeps every staged run on the harness we
+guarantee, plus the project's additions.
 
 ## Mechanisms (confirmed in Claude Code's docs)
 
@@ -524,7 +558,8 @@ and against the transcripts of real sessions on this machine.
 | Can a PreToolUse hook match the `Skill` tool and see which skill? | Yes. PreToolUse matches tool names exactly, and the docs name "a `PreToolUse` hook matching the `Skill` tool". Its `tool_input` is `{"skill": "<name>", "args": "…"}` (`args` optional): 9 of 9 `Skill` calls in local transcripts, and the documented permission form `Skill(skill:deploy)` | The stage hook is a PreToolUse hook on `Skill` that allows or denies by `tool_input.skill`, with `permissionDecision: "deny"` and a reason |
 | What bypasses it? | Typing `/name` "bypasses `PreToolUse`"; `UserPromptExpansion` fires on that path instead, matched on the command name | Headless stage prompts never start with a slash command. Interactive sessions are unrestricted; a `UserPromptExpansion` hook records slash-command starts for the trace |
 | How does `disable-model-invocation` interact with in-stage invocation? | `true` removes the skill's description from Claude's context, and "if Claude tries anyway, Claude Code blocks the call"; it also blocks preloading into subagents | Universal skills must leave it `false`: the agent picks them itself. It stays on user-only skills (`setup`, `test-gate`, `headless-loop`). Stage restriction comes from the hook, not from this field |
-| Can settings hide plugin skills per stage? | No: "plugin skills are not affected by `skillOverrides`" | Every universal skill's description is listed in every session that loads the plugin ([D1](#decisions-for-review)). Permission rules (`Skill(name)` allow and deny) do apply, so the runner can add per-stage deny rules as a second layer |
+| Can settings hide plugin skills per stage? | No: "plugin skills are not affected by `skillOverrides`". Project skills are | A plugin's skills are listed in every session that loads it, so the universal skills are not installed for interactive use: the runner gives each stage its own ([how](#how-a-stage-gets-its-skills)), and hides out-of-stage project skills with `skillOverrides`. Permission rules (`Skill(name)` allow and deny) apply to both, as a second layer |
+| Can a session load more than one plugin directory? | Yes: `--plugin-dir` is repeatable, and a folder of plugins loads each child (`claude --help`, 2.1.322) | The installed plugin and the runner's per-stage plugin load side by side |
 | Which fields carry the ids the trace needs? | Every hook gets `session_id`, `transcript_path`, `cwd`, `hook_event_name`, and `prompt_id` after the first input; PreToolUse and PostToolUse add `tool_name`, `tool_input` and `tool_use_id`; inside a subagent, `agent_id` and `agent_type` | The trace keys each row by `session_id` and `tool_use_id` (as it does today) and adds `agent_id`, so a skill invoked inside a subagent is attributed to it |
 | Can a skill restrict its own tools? | `allowed-tools` only pre-approves ("it does not restrict which tools are available"). `disallowed-tools` removes tools "while this skill is active", and clears on the user's next message | Per-skill boundaries: the hooks record first ([D7](#decisions-for-review)). `disallowed-tools` is a native candidate, but when it clears in a headless session that invokes several skills must be tested in U4 |
 | Do hooks in a skill's frontmatter end with the skill? | No: they stay registered "for the rest of the session" | Skill-scoped hooks cannot mark a skill's end or scope a boundary. The stage hook is a plugin hook that tracks the active skill itself |
@@ -564,7 +599,7 @@ Each has a recommendation; the maintainer decides before U3.
 
 | # | Decision | Options | Recommendation |
 | --- | --- | --- | --- |
-| D1 | **Where the universal skills ship.** `skillOverrides` cannot hide plugin skills, so 16 descriptions would be listed in every session of every user, and the model could start using them unasked, before they are benchmarked | (a) this plugin; (b) a second plugin in this marketplace, `replicable-stages`, holding the skills and the stage hook, that the runner loads and users opt into | (b), until the benchmark shows the staged harness beats the current one; then merge |
+| D1 | **Where the universal skills ship.** `skillOverrides` cannot hide plugin skills, so installed skills are listed in every session | — | **Decided:** Understand's skills in the installed plugin; every other universal skill only in the per-stage plugin the runner assembles ([how](#how-a-stage-gets-its-skills)). Project bundles are supported, not benchmarked; universal skills are not overridable |
 | D2 | **Who pushes and opens the PR** | A Deliver skill; the runner | The runner. The agent never needs push or `gh` write access, and the benchmark already denies both |
 | D3 | **Commits during Build** | The agent commits as it goes; the runner checkpoints at each handoff and `commit-change` rewrites the run's checkpoints into final commits | Runner checkpoints. Verify then reviews a fixed tree, and `commit-change` only touches this run's commits |
 | D4 | **Build granularity in multi-stage** | One session for all units; one session per unit | One per unit: small contexts, and per-unit cost and iterations |

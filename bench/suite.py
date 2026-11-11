@@ -26,7 +26,6 @@ from typing import Dict, List, Optional
 import issues as issues_mod
 from common import read_json, tree_digest
 
-TIERS = ("L1", "L2", "L3", "adv")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 DEFAULT_ARMS: Dict[str, dict] = {
@@ -70,10 +69,10 @@ class Task:
     id: str
     dir: Path
     version: int
-    tier: str
     prompt: str
     fail_to_pass: List[str]
     pass_to_pass: List[str]
+    tier: Optional[str] = None  # a free-form descriptive tag; never used to select or score
     skill: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     test_command: Optional[str] = None
@@ -117,22 +116,30 @@ class Suite:
     def labels(self) -> Path:
         return self.root / "results" / "labels.jsonl"
 
-    def select(self, patterns: Optional[List[str]] = None, tier: Optional[str] = None) -> List[Task]:
-        tasks = sorted(self.tasks.values(), key=lambda t: (TIERS.index(t.tier), t.id))
+    def select(self, patterns: Optional[List[str]] = None, tier: Optional[str] = None,
+               difficulty: Optional[Dict[str, str]] = None) -> List[Task]:
+        """The tasks to run: by id patterns, then by the run tier's ``tasks`` (patterns or a count).
+
+        With a count, the pick takes one task from each measured difficulty first (``difficulty``
+        maps task id to its bucket, from report.difficulty), so a small smoke set still spans
+        difficulties; without measurements it takes the first tasks by id.
+        """
+        tasks = sorted(self.tasks.values(), key=lambda t: t.id)
         if patterns:
             tasks = [t for t in tasks if any(fnmatch.fnmatch(t.id, p) for p in patterns)]
         tier_cfg = self.tiers.get(tier or "", {})
         if isinstance(tier_cfg.get("tasks"), list):
             tasks = [t for t in tasks if any(fnmatch.fnmatch(t.id, p) for p in tier_cfg["tasks"])]
         elif isinstance(tier_cfg.get("tasks"), int):
-            # one per tier first, so a small smoke set still spans difficulties
+            difficulty = difficulty or {}
             picked, seen = [], set()
             for t in tasks:
-                if t.tier not in seen:
+                bucket = difficulty.get(t.id, "unmeasured")
+                if bucket not in seen:
                     picked.append(t)
-                    seen.add(t.tier)
+                    seen.add(bucket)
             picked += [t for t in tasks if t not in picked]
-            tasks = sorted(picked[:tier_cfg["tasks"]], key=lambda t: (TIERS.index(t.tier), t.id))
+            tasks = sorted(picked[:tier_cfg["tasks"]], key=lambda t: t.id)
         return tasks
 
     def setting(self, name: str, task: Optional[Task] = None):
@@ -153,7 +160,7 @@ def load_task(path: Path, issues: Optional[Dict[int, dict]] = None) -> Task:
     _require(tid == path.name, f"{path}: task id {tid!r} must match its directory name")
     _require(re.fullmatch(r"[a-z0-9][a-z0-9._-]*", tid) is not None, f"{tid}: ids are lowercase, digits, . _ -")
     tier = data.get("tier")
-    _require(tier in TIERS, f"{tid}: tier must be one of {', '.join(TIERS)}")
+    _require(tier is None or isinstance(tier, str), f"{tid}: tier is an optional free-form tag (a string)")
     version = data.get("version", 1)
     _require(isinstance(version, int) and version >= 1, f"{tid}: version must be a positive integer")
     issue_no = data.get("issue")

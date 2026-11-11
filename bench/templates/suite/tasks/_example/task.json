@@ -1,7 +1,6 @@
 {
   "id": "_example",
   "version": 1,
-  "tier": "L1",
   "tags": ["example"],
   "skill": "epcc",
   "fail_to_pass": ["tests/test_new_behaviour.py"],

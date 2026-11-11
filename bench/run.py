@@ -167,7 +167,10 @@ def cmd_run(args) -> int:
     if args.tier and args.tier not in suite.tiers:
         raise SystemExit(f"unknown tier {args.tier!r}; defined: {', '.join(suite.tiers)}")
     arm_names = args.arms or tier.get("arms") or list(suite.arms)
-    tasks = suite.select(args.tasks, args.tier)
+    import report
+    measured = report.difficulty(report.load_rows(suite.results),
+                                 hashes={t.id: t.content_hash[:16] for t in suite.tasks.values()})
+    tasks = suite.select(args.tasks, args.tier, difficulty={t: d["bucket"] for t, d in measured.items()})
     if not tasks:
         raise SystemExit("no tasks selected")
     trials = args.trials or tier.get("trials") or int(suite.defaults["trials"])
@@ -258,7 +261,7 @@ def cmd_validate(args) -> int:
     if not args.grade:
         for t in tasks:
             issue = f", issue #{t.issue} ({t.issue_state} in the snapshot)" if t.issue else ""
-            print(f"  ok  {t.id} (v{t.version}, {t.tier}): {len(t.fail_to_pass)} FAIL_TO_PASS, "
+            print(f"  ok  {t.id} (v{t.version}{', ' + t.tier if t.tier else ''}): {len(t.fail_to_pass)} FAIL_TO_PASS, "
                   f"{len(t.pass_to_pass)} PASS_TO_PASS, {len(t.hidden_files())} hidden file(s)"
                   f"{'' if t.solution.exists() else ', NO solution.patch'}{issue}")
         print("schema ok; add --grade to prove each task fails at the pinned commit and passes with its solution")

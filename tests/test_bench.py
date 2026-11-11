@@ -220,6 +220,61 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(report.bootstrap(better, lambda xs: sum(xs) / len(xs)), (1.0, 1.0, 1.0))
 
 
+def result_row(task, arm, resolved, trial, task_hash="v1", route=None, cost=0.1, status="ok"):
+    plugin = None if arm == "baseline" else {"version": "0.6.0", "sha": "a" * 40, "content_hash": "p"}
+    key = f"{task}|{arm}|{task_hash}|{trial}"
+    return {"run_id": key, "key": key, "ts": f"2026-01-01T00:00:{trial:02d}Z", "status": status,
+            "resolved": resolved, "task": {"id": task, "hash": task_hash}, "route": route,
+            "arm": {"name": arm, "plugin": plugin, "prompt": "raw"}, "totals": {"cost_usd": cost, "wall_ms": 2000}}
+
+
+class DifficultyTests(unittest.TestCase):
+    """Task difficulty is measured from the baseline's results, never declared."""
+
+    def rows(self):
+        rows = []
+        for i, ok in enumerate([True, True, True]):
+            rows.append(result_row("easy-one", "baseline", ok, i, cost=0.2))
+        for i, ok in enumerate([True, False, False]):
+            rows.append(result_row("mid-one", "baseline", ok, i))
+        for i in range(2):
+            rows.append(result_row("hard-one", "baseline", False, i, cost=0.9))
+        rows.append(result_row("hard-one", "baseline", True, 9, task_hash="v0"))       # an older task version
+        rows.append(result_row("hard-one", "baseline", True, 8, status="infra_error"))  # never scored
+        rows.append(result_row("new-one", "candidate-raw", True, 0))                    # no baseline: unmeasured
+        for i, (task, route) in enumerate([("easy-one", "single-stage"), ("mid-one", "single-stage"),
+                                           ("hard-one", "multi-stage")]):
+            rows.append(result_row(task, "candidate-raw", task != "hard-one", i, route=route))
+        return rows
+
+    def test_buckets_come_from_the_baseline_on_the_current_task_version(self):
+        diff = report.difficulty(self.rows(), hashes={"easy-one": "v1", "mid-one": "v1", "hard-one": "v1",
+                                                      "new-one": "v1"})
+        self.assertEqual({t: d["bucket"] for t, d in diff.items()},
+                         {"easy-one": "easy", "mid-one": "medium", "hard-one": "hard"})
+        self.assertEqual((diff["hard-one"]["baseline_solved"], diff["hard-one"]["baseline_runs"]), (0, 2))
+        self.assertEqual(diff["hard-one"]["baseline_median_cost"], 0.9)
+        self.assertEqual(report.bucket_of(diff, "new-one"), "unmeasured")
+        old = report.difficulty(self.rows(), hashes={"hard-one": "v0"})
+        self.assertEqual(old["hard-one"]["bucket"], "easy")
+
+    def test_reports_group_by_difficulty_and_route(self):
+        data = report.build(self.rows())
+        cand = data["arms"]["candidate-raw"]
+        self.assertEqual(list(cand["by_difficulty"]), ["easy", "medium", "hard", "unmeasured"])
+        self.assertEqual(cand["by_difficulty"]["hard"]["pass1"], 0.0)
+        self.assertEqual(cand["by_route"]["single-stage"]["tasks"], 2)
+        self.assertEqual(cand["by_route"]["none"]["tasks"], 1)
+        self.assertEqual(data["difficulty"]["new-one"], {"bucket": "unmeasured"})
+        md = report.markdown(data)
+        self.assertIn("## By measured difficulty", md)
+        self.assertIn("## By route", md)
+        self.assertIn("| hard-one | hard (0/2 · $0.90) |", md)
+        self.assertNotIn("Tier", md)
+        no_routes = [r for r in self.rows() if r["route"] is None]
+        self.assertNotIn("## By route", report.markdown(report.build(no_routes)))
+
+
 class SuiteTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -238,10 +293,22 @@ class SuiteTests(unittest.TestCase):
         self.assertIn("candidate-skill", s.arms)
         self.assertTrue(s.tasks["t-one"].content_hash)
 
+    def test_tier_is_an_optional_tag_and_selection_spans_measured_difficulty(self):
+        write(self.root, {f"tasks/{t}/task.json": {"fail_to_pass": ["a"]} for t in ("t-a", "t-b", "t-c")})
+        write(self.root, {"tasks/t-one/task.json": {"tier": "cross-module refactor", "fail_to_pass": ["a"]}})
+        for t in ("t-a", "t-b", "t-c"):
+            write(self.root, {f"tasks/{t}/prompt.md": "Do it.\n"})
+        s = suite_mod.load(self.root)
+        self.assertIsNone(s.tasks["t-a"].tier)
+        self.assertEqual(s.tasks["t-one"].tier, "cross-module refactor")
+        self.assertEqual([t.id for t in s.select(tier="smoke")], ["t-a", "t-b", "t-c"])  # unmeasured: by id
+        measured = {"t-a": "easy", "t-b": "easy", "t-c": "hard", "t-one": "medium"}
+        self.assertEqual([t.id for t in s.select(tier="smoke", difficulty=measured)], ["t-a", "t-c", "t-one"])
+
     def test_rejects_what_cannot_be_measured(self):
         cases = [
             ("suite.json", {"dataset": {"repo": "x", "sha": "main"}}, "40-character"),
-            ("tasks/t-one/task.json", {"tier": "L9", "fail_to_pass": ["a"]}, "tier"),
+            ("tasks/t-one/task.json", {"tier": ["L1"], "fail_to_pass": ["a"]}, "free-form"),
             ("tasks/t-one/task.json", {"tier": "L1", "fail_to_pass": []}, "fail_to_pass"),
             ("suite.json", {"dataset": {"repo": "x", "sha": "a" * 40}, "defaults": {"test_command": "t"},
                             "arms": {"bad": {"plugin": None, "prompt": "skill"}}}, "needs a plugin"),
@@ -509,7 +576,7 @@ class EndToEndTests(unittest.TestCase):
                           "candidate-skill": {"plugin": "candidate", "prompt": "skill", "setup": ["test_gate"]}}
         write(self.suite, {
             "suite.json": config,
-            "tasks/add-double/task.json": {"tier": "L1", "fail_to_pass": ["tests/test_double.py"],
+            "tasks/add-double/task.json": {"fail_to_pass": ["tests/test_double.py"],
                                            "pass_to_pass": ["tests/test_calc.py"]},
             "tasks/add-double/prompt.md": "Add double(x) to calc.py.\n",
             "tasks/add-double/hidden/tests/test_double.py":
@@ -546,7 +613,7 @@ class EndToEndTests(unittest.TestCase):
     def test_validate_proves_the_task(self):
         out = self.bench("validate", "--suite", str(self.suite), "--grade")
         self.assertIn("ok  add-double", out)
-        write(self.suite, {"tasks/add-double/task.json": {"tier": "L1", "fail_to_pass": ["tests/test_calc.py"]}})
+        write(self.suite, {"tasks/add-double/task.json": {"fail_to_pass": ["tests/test_calc.py"]}})
         res = subprocess.run([sys.executable, str(BENCH / "run.py"), "validate", "--suite", str(self.suite), "--grade"],
                              capture_output=True, text=True, env=self.env(), timeout=300)
         self.assertEqual(res.returncode, 1)
@@ -601,6 +668,7 @@ class EndToEndTests(unittest.TestCase):
         md = self.bench("report", "--suite", str(self.suite), "--experiment", "0000-test")
         self.assertIn("| candidate-raw |", md)
         self.assertIn("candidate-raw | baseline", md)
+        self.assertIn("| add-double | easy (1/1 · $0.05) |", md)  # measured from the baseline run
         self.assertNotIn("0002", md)
         html_path = self.suite / "results" / "reports" / "all.html"
         html_path.parent.mkdir(parents=True, exist_ok=True)

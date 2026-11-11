@@ -54,6 +54,21 @@ isolate graphify's contribution from the plugin's, add a suite arm such as
 
 A run is **resolved** when every selection in both groups passes.
 
+**Task difficulty is measured, not labelled.** It comes from the `baseline` arm's scored runs on
+the task's current version (`bench/report.py`):
+
+| Difficulty | The baseline... |
+| --- | --- |
+| `easy` | resolved every trial |
+| `medium` | resolved some trials |
+| `hard` | resolved none |
+| `unmeasured` | has not run the task |
+
+The baseline's median cost and time on a task (its effort) order tasks within a bucket. Reports
+group results by difficulty and by `route` (`single-stage` or `multi-stage`, recorded by runs
+that have one), so a harness change can be read where it matters: on the tasks the baseline
+finds hard, and per route.
+
 ## Metrics
 
 Every run appends one row to `results/runs.jsonl`.
@@ -187,7 +202,7 @@ A task is a directory `tasks/<id>/` (directories starting with `_` are ignored):
 
 | File | Meaning |
 | --- | --- |
-| `task.json` | `tier` (`L1`, `L2`, `L3` or `adv`), `version`, `fail_to_pass`, `pass_to_pass`, optional `issue`, `issue_comments` (default true), `skill`, `tags`, `test_command`, `setup`, `delivery`, `budget_usd`, `timeout_s` |
+| `task.json` | `version`, `fail_to_pass`, `pass_to_pass`, optional `tier` (a free-form descriptive tag, never used to select or score), `issue`, `issue_comments` (default true), `skill`, `tags`, `test_command`, `setup`, `delivery`, `budget_usd`, `timeout_s` |
 | `prompt.md` | What a teammate would write: the behaviour and why, never the solution, never the hidden tests' names. Optional when the task names an issue |
 | `hidden/` | Acceptance tests at their repository paths, copied in only for grading. They overwrite anything the agent wrote at the same path |
 | `solution.patch` | A reference change from the pinned commit, without the hidden tests |
@@ -242,7 +257,7 @@ python3 bench/run.py report --suite ../replicable-bench --experiment 0003-gate-o
 
 | Tier | Tasks | Trials | Arms | Use |
 | --- | --- | --- | --- | --- |
-| `smoke` | 3 (one per tier first) | 1 | baseline, candidate-raw | Does the pipeline work? |
+| `smoke` | 3 (one per measured difficulty first, else by id) | 1 | baseline, candidate-raw | Does the pipeline work? |
 | `standard` | all | 3 | all five | Every harness change |
 | `release` | all | 5 | all five | Before tagging a version |
 
@@ -250,7 +265,8 @@ python3 bench/run.py report --suite ../replicable-bench --experiment 0003-gate-o
 
 **The dashboard** (`--html`) is one self-contained file with no network access:
 - a "compare A with B" filter, with headline tiles (pass@1, pass^k, cost, time, false done, with intervals)
-- a per-task dumbbell, regressions first
+- a per-task dumbbell, regressions first, with each task's measured difficulty
+- pass@1 and cost by difficulty and by route, A beside B
 - a trend of pass@1 and cost across every plugin version ever run, with the baseline as reference
 - where time and tokens go: per tool, skill, subagent and hook, A beside B
 - failure labels per arm

@@ -107,6 +107,10 @@ details summary { cursor: pointer; color: var(--text-secondary); margin: 8px 0; 
   <div class="card"><div class="legend" id="dumbLegend"></div><div id="dumbbell"></div>
     <details><summary>Table</summary><div class="scroll" id="taskTable"></div></details></div>
 
+  <h2>By difficulty and route</h2>
+  <p class="sub">Difficulty is measured from the baseline arm: easy when it resolved every trial of the task, hard when it resolved none, medium in between. Routes appear for runs that had one.</p>
+  <div class="card scroll" id="groupTable"></div>
+
   <h2>Trend across plugin versions</h2>
   <p class="sub">Every run ever recorded, grouped by plugin version in the order versions were first run. The baseline is the no-plugin reference.</p>
   <div class="grid2">
@@ -347,18 +351,31 @@ details summary { cursor: pointer; color: var(--text-secondary); margin: 8px 0; 
     const rows = [];
     for (const t of D.tasks) {
       const a = A && A.per_task[t], b = B && B.per_task[t];
-      if (a && b) rows.push({ task: t, a: a.pass1, b: b.pass1, aCost: a.median_cost, bCost: b.median_cost, aName: selA.value, bName: selB.value, aN: a.n, bN: b.n, tier: D.tiers[t] });
+      if (a && b) rows.push({ task: t, a: a.pass1, b: b.pass1, aCost: a.median_cost, bCost: b.median_cost, aName: selA.value, bName: selB.value, aN: a.n, bN: b.n, difficulty: D.difficulty[t] });
     }
     rows.sort((x, y) => (x.a - x.b) - (y.a - y.b) || x.task.localeCompare(y.task));
     legend($("dumbLegend"), [{ label: selA.value, color: css("--series-1"), dot: true }, { label: selB.value, color: css("--reference"), dot: true }]);
     dumbbell($("dumbbell"), rows);
     table($("taskTable"), [
-      { label: "Task", get: (r) => r.task }, { label: "Tier", get: (r) => r.tier },
+      { label: "Task", get: (r) => r.task },
+      { label: "Difficulty", get: (r) => !r.difficulty ? "" : r.difficulty.bucket + (r.difficulty.baseline_runs ? " (" + r.difficulty.baseline_solved + "/" + r.difficulty.baseline_runs + ")" : "") },
       { label: selA.value + " pass@1", num: 1, get: (r) => pct(r.a) + " (n=" + r.aN + ")" },
       { label: selB.value + " pass@1", num: 1, get: (r) => pct(r.b) + " (n=" + r.bN + ")" },
       { label: "Change", num: 1, get: (r) => signed(r.a - r.b, (v) => Math.round(v * 100) + " pts") || "same" },
       { label: selA.value + " cost", num: 1, get: (r) => usd(r.aCost) }, { label: selB.value + " cost", num: 1, get: (r) => usd(r.bCost) },
     ], rows);
+    const groups = [];
+    for (const [field, kind] of [["by_difficulty", "difficulty"], ["by_route", "route"]]) {
+      const names = Array.from(new Set(Object.keys((A && A[field]) || {}).concat(Object.keys((B && B[field]) || {}))));
+      if (kind === "route" && names.length === 1 && names[0] === "none") continue;
+      for (const n of names) groups.push({ kind, name: n, a: (A && A[field][n]) || {}, b: (B && B[field][n]) || {} });
+    }
+    table($("groupTable"), [
+      { label: "Group", get: (r) => r.kind + ": " + r.name },
+      { label: selA.value + " pass@1", num: 1, get: (r) => pct(r.a.pass1) + (r.a.tasks ? " (" + r.a.tasks + " tasks)" : "") },
+      { label: selB.value + " pass@1", num: 1, get: (r) => pct(r.b.pass1) + (r.b.tasks ? " (" + r.b.tasks + " tasks)" : "") },
+      { label: selA.value + " cost", num: 1, get: (r) => usd(r.a.median_cost) }, { label: selB.value + " cost", num: 1, get: (r) => usd(r.b.median_cost) },
+    ], groups);
     efficiency(A, B);
   }
 

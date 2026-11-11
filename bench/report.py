@@ -5,9 +5,15 @@ pass^k   chance that k independent trials all resolve: C(c, k) / C(n, k) per tas
 pass@k   chance that at least one of k trials resolves: 1 - C(n - c, k) / C(n, k)
 deltas   paired by task (A - B), with a 95% bootstrap interval that resamples tasks, then trials
 
+difficulty  measured, not labelled: from every scored run of the baseline arm on the task's
+            current version. easy = the baseline resolved every trial, hard = none,
+            medium = some, unmeasured = no baseline runs. The baseline's median cost and
+            time (its effort) order tasks within a bucket.
+
 Rows are the latest per run key; infrastructure errors are left out of every
 score and counted on their own. Manual labels (results/labels.jsonl) override
-the automatic failure label.
+the automatic failure label. Results are grouped by measured difficulty and by
+``route`` (single-stage or multi-stage, written by runs that have one).
 """
 
 from __future__ import annotations
@@ -22,6 +28,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from common import percentile, read_json, read_jsonl
 
 BOOTSTRAP = 2000
+DIFFICULTY_ARM = "baseline"
+DIFFICULTY = ("easy", "medium", "hard", "unmeasured")
+NO_ROUTE = "none"
 
 
 def load_rows(results: Path, labels: Optional[Path] = None, plan: Optional[Path] = None) -> List[dict]:
@@ -71,6 +80,50 @@ def _wall(row) -> float:
 
 def _tokens(t: dict) -> int:
     return sum(int(t.get(k) or 0) for k in ("input", "cache_read", "cache_write", "output"))
+
+
+def difficulty(rows: List[dict], hashes: Optional[Dict[str, str]] = None, arm: str = DIFFICULTY_ARM) -> Dict[str, dict]:
+    """Each task's measured difficulty (see the module docstring), keyed by task id.
+
+    ``hashes`` maps task id to the task version to measure (the row's ``task.hash``); without it,
+    the latest version recorded. Tasks the baseline never ran are absent: they are unmeasured.
+    """
+    good, _ = latest_per_key(rows)
+    if hashes is None:
+        hashes = {r["task"]["id"]: r["task"].get("hash") for r in sorted(good, key=lambda r: r.get("ts") or "")}
+    by_task = defaultdict(list)
+    for r in good:
+        t = r["task"]
+        if r["arm"]["name"] == arm and t["id"] in hashes and t.get("hash") == hashes[t["id"]]:
+            by_task[t["id"]].append(r)
+    out = {}
+    for tid, rs in sorted(by_task.items()):
+        c, n = sum(1 for r in rs if r.get("resolved")), len(rs)
+        out[tid] = {"bucket": "easy" if c == n else "hard" if c == 0 else "medium", "baseline_solved": c,
+                    "baseline_runs": n, "baseline_median_cost": _med([_cost(r) for r in rs]),
+                    "baseline_median_wall_s": _med([_wall(r) for r in rs])}
+    return out
+
+
+def bucket_of(diff: Dict[str, dict], task_id: str) -> str:
+    return (diff.get(task_id) or {}).get("bucket", "unmeasured")
+
+
+def _summary(rows: List[dict]) -> dict:
+    by_task = defaultdict(list)
+    for r in rows:
+        by_task[r["task"]["id"]].append(1.0 if r.get("resolved") else 0.0)
+    return {"runs": len(rows), "tasks": len(by_task),
+            "pass1": round(mean(mean(v) for v in by_task.values()), 4) if by_task else None,
+            "median_cost": _med([_cost(r) for r in rows]), "median_wall_s": _med([_wall(r) for r in rows])}
+
+
+def _grouped(rows: List[dict], key, order: Optional[Sequence[str]] = None) -> Dict[str, dict]:
+    groups = defaultdict(list)
+    for r in rows:
+        groups[key(r)].append(r)
+    names = [g for g in order if g in groups] if order else sorted(groups)
+    return {g: _summary(groups[g]) for g in names}
 
 
 def cells(rows: List[dict]) -> Dict[Tuple[str, str], List[dict]]:
@@ -201,7 +254,8 @@ def build(rows: List[dict], experiment: Optional[str] = None, pairs: Optional[Li
     task_ids = sorted({t for _, t in grid})
     trials = [len(v) for v in grid.values()]
     k = k or (min(trials) if trials else 1)
-    tier_of = {r["task"]["id"]: r["task"].get("tier") for r in good}
+    diff = difficulty(rows, hashes={r["task"]["id"]: r["task"].get("hash") for r in good})
+    route_of = lambda r: r.get("route") or NO_ROUTE  # noqa: E731
 
     arms = {}
     for arm in arm_names:
@@ -236,7 +290,8 @@ def build(rows: List[dict], experiment: Optional[str] = None, pairs: Optional[Li
             "labels": dict(Counter(r.get("failure_label") for r in arm_rows if r.get("failure_label")).most_common()),
             "infra_errors": sum(1 for r in infra if r["arm"]["name"] == arm),
             "per_task": per_task,
-            "by_tier": _by_tier(per_task, tier_of),
+            "by_difficulty": _grouped(arm_rows, lambda r: bucket_of(diff, r["task"]["id"]), DIFFICULTY),
+            "by_route": _grouped(arm_rows, route_of),
             "efficiency": efficiency(arm_rows),
             "delivery": _delivery(arm_rows),
         }
@@ -254,7 +309,7 @@ def build(rows: List[dict], experiment: Optional[str] = None, pairs: Optional[Li
         per_task = []
         for t in common:
             pa, pb = mean(res[t][0]), mean(res[t][1])
-            per_task.append({"task": t, "tier": tier_of.get(t), "a_pass1": pa, "b_pass1": pb, "delta": pa - pb,
+            per_task.append({"task": t, "difficulty": bucket_of(diff, t), "a_pass1": pa, "b_pass1": pb, "delta": pa - pb,
                              "a_cost": _med(cost[t][0]), "b_cost": _med(cost[t][1]),
                              "a_wall_s": _med(wall[t][0]), "b_wall_s": _med(wall[t][1]),
                              "verdict": "better" if pa > pb else "worse" if pa < pb else "same"})
@@ -267,15 +322,9 @@ def build(rows: List[dict], experiment: Optional[str] = None, pairs: Optional[Li
         })
 
     return {"experiment": experiment, "k": k, "arms": arms, "arm_names": arm_names, "tasks": task_ids,
-            "tiers": tier_of, "comparisons": comparisons, "infra_errors": len(infra), "rows": len(good),
+            "difficulty": {t: diff.get(t) or {"bucket": "unmeasured"} for t in task_ids},
+            "routes": sorted({route_of(r) for r in good}), "comparisons": comparisons, "infra_errors": len(infra), "rows": len(good),
             "trend": trend(rows), "env": _env(good), "runs": _run_list(good + infra)}
-
-
-def _by_tier(per_task: dict, tier_of: dict) -> dict:
-    groups = defaultdict(list)
-    for t, v in per_task.items():
-        groups[tier_of.get(t) or "?"].append(v["pass1"])
-    return {tier: round(mean(v), 4) for tier, v in sorted(groups.items())}
 
 
 def _delivery(rows: List[dict]) -> Optional[dict]:
@@ -367,14 +416,26 @@ def markdown(data: dict) -> str:
             lines.append(f"| {c['a']} | {c['b']} | {c['tasks']} | {_ci(c['pass1'], pct=True)} | {_ci(c['cost'])} | "
                          f"{_ci(c['wall_s'], digits=0)} | {', '.join(c['improvements']) or '–'} | "
                          f"{', '.join(c['regressions']) or '–'} |")
-    lines += ["", "## Per task (pass@1, median cost)", "", "| Task | Tier | " + " | ".join(data["arm_names"]) + " |",
+    lines += _group_table(data, "by_difficulty", "Difficulty",
+                          f"## By measured difficulty (from the {DIFFICULTY_ARM} arm: pass@1 · median cost · tasks)")
+    if data["routes"] != [NO_ROUTE]:
+        lines += _group_table(data, "by_route", "Route", "## By route (pass@1 · median cost · tasks)")
+    lines += ["", "## Per task (pass@1, median cost)", "",
+              f"Difficulty is measured: the {DIFFICULTY_ARM} arm's resolved trials and median cost on the task.", "",
+              "| Task | Difficulty | " + " | ".join(data["arm_names"]) + " |",
               "|---|---|" + "---:|" * len(data["arm_names"])]
-    for t in data["tasks"]:
+    order = {b: i for i, b in enumerate(DIFFICULTY)}
+    tasks = sorted(data["tasks"], key=lambda t: (order[data["difficulty"][t]["bucket"]],
+                                                 data["difficulty"][t].get("baseline_median_cost") or 0, t))
+    for t in tasks:
         cellv = []
         for name in data["arm_names"]:
             v = data["arms"][name]["per_task"].get(t)
             cellv.append("–" if not v else f"{v['c']}/{v['n']} · ${_f(v['median_cost'])}")
-        lines.append(f"| {t} | {data['tiers'].get(t) or ''} | " + " | ".join(cellv) + " |")
+        d = data["difficulty"][t]
+        measured = f" ({d['baseline_solved']}/{d['baseline_runs']} · ${_f(d['baseline_median_cost'])})" \
+            if d["bucket"] != "unmeasured" else ""
+        lines.append(f"| {t} | {d['bucket']}{measured} | " + " | ".join(cellv) + " |")
     lines += ["", "## Failure labels", "", "| Arm | " + " | ".join(["label", "runs"]) + " |", "|---|---|---:|"]
     for name in data["arm_names"]:
         for label, n in data["arms"][name]["labels"].items():
@@ -424,6 +485,23 @@ def markdown(data: dict) -> str:
             lines.append(f"| {t['series']} | {t['version']} | {t['first_ts'][:10]} | {t['runs']} | {t['tasks']} | "
                          f"{_f(t['pass1'], pct=True)} | ${_f(t['median_cost'])} | {_f(t['median_wall_s'], 0)} s |")
     return "\n".join(lines) + "\n"
+
+
+def _group_table(data: dict, field: str, label: str, heading: str) -> List[str]:
+    names = data["arm_names"]
+    groups = []
+    for name in names:
+        groups += [g for g in data["arms"][name][field] if g not in groups]
+    if not groups:
+        return []
+    lines = ["", heading, "", f"| {label} | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
+    for g in groups:
+        cellv = []
+        for name in names:
+            v = data["arms"][name][field].get(g)
+            cellv.append("–" if not v else f"{_f(v['pass1'], pct=True)} · ${_f(v['median_cost'])} · {v['tasks']}")
+        lines.append(f"| {g} | " + " | ".join(cellv) + " |")
+    return lines
 
 
 def html(data: dict, title: str) -> str:

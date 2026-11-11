@@ -58,12 +58,16 @@ safe. Background on loops and harness layers is in
 
 ### Measuring
 
-- **SessionEnd** appends one row per session: tokens, cost, turns, blocks per
-  hook, final check status, files changed.
-- **Every hook logs** its latency, its decision and its output size.
-- **A fixed task set** of 5–10 real tasks runs with and without the harness
-  (`claude plugin eval` can drive it).
-- **Seeded bugs** measure catch rates.
+Implemented as the benchmark: see [benchmarking.md](benchmarking.md).
+
+- **A fixed task set** on a pinned commit of a real repository runs under a
+  no-plugin baseline, the previous release and the candidate (`bench/run.py`).
+- **Every run is recorded**, resolved or not, with tokens, cost, time, turns,
+  time and tokens per tool, per skill and per subagent, and a failure label.
+- **Every plugin hook logs** its latency, its decision and a reason code, silent
+  runs included (`REPLICABLE_TRACE`). The session transcript adds the latency and
+  output size of every hook Claude Code ran, graphify's included.
+- **Seeded bugs** (adversarial tasks) measure catch rates.
 
 ## Practices
 
@@ -109,7 +113,7 @@ safe. Background on loops and harness layers is in
 | 18 | Subagent contract | SubagentStop | Enforce output format, evidence and size | — | Context ↓ | ○ |
 | 19 | State checkpoint | PreCompact | Write the plan, decisions and files touched to disk (pairs with #3) | Plan | Survives compaction | ○ |
 | 20 | Attention ping | Notification | Desktop or phone notification when input is needed | — | Time ↓ | ○ |
-| 21 | Metrics + learnings | SessionEnd | Log metrics; suggest a wiki or `CLAUDE.md` entry for traps found | Wiki | Makes everything above measurable | ○ |
+| 21 | Metrics + learnings | SessionEnd | Log metrics; suggest a wiki or `CLAUDE.md` entry for traps found | Wiki | Makes everything above measurable | ◐ P: metrics come from the benchmark (`bench/`, hook trace via `REPLICABLE_TRACE`), not a SessionEnd hook; learnings ○ |
 
 What each graph contributes:
 - **Code graph (graphify):** what a change touches. It makes edit → verify precise (1, 4, 6, 7, 11, 12, 16).

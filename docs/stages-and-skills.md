@@ -14,6 +14,7 @@ through a **validated handoff** instead of a growing transcript.
 
 - [Stages](#stages)
 - [How the user works with the harness](#how-the-user-works-with-the-harness)
+- [Verification: the project's procedure](#verification-the-projects-procedure)
 - [Anatomy of a skill](#anatomy-of-a-skill)
 - [Which skills each stage allows](#which-skills-each-stage-allows)
 - [The skills](#the-skills)
@@ -68,9 +69,9 @@ headless stage.
   the spec to the issue and starts the runner for that issue, **detached**,
   so closing the session or the terminal does not stop the run. All the
   run's state is on disk (handoffs, check records), never in a session.
-- **The runner never waits on a person.** When it needs an answer (a gap
-  Plan found, a cap hit, an escalation), it stops the run and writes the
-  question into the handoff.
+- **The runner never waits on a person.** When it needs an answer (the
+  verification procedure is not in place, a gap Plan found, a cap hit, an
+  escalation), it stops the run and writes the question into the handoff.
 - **The issue is the durable channel.** Every question, and the final result
   (the branch, or the PR when the runner delivers), is posted as a comment,
   so GitHub's notifications reach the user wherever they are.
@@ -82,6 +83,67 @@ headless stage.
   restarts the run from its last handoff.
 - **The benchmark runs the same headless path** with no session at all;
   questions go to a file.
+
+## Verification: the project's procedure
+
+The project guarantees that its changes can be verified, and says how, in
+one place: a `## Verification` section in `AGENTS.md` (or a file the
+`verification` slot points to). The harness trusts that procedure exactly.
+It never invents verification, and never builds what a check needs:
+Dockerfiles, compose files, CI workflows and deploy configuration are off
+limits unless the spec itself asks for them. A login feature never comes
+with a Dockerfile.
+
+The procedure lists the project's steps, each with the command it runs and
+when it applies (U2 fixes the format). For example:
+
+```markdown
+## Verification
+
+| Step | Command | Applies when |
+| --- | --- | --- |
+| Build backend, MCP and webapp | `python3 scripts/compose-session.py --slot 1 --profile hosted up -d --build` | always |
+| Test the webapp | `…` | the change touches `src/replicable/web/**` |
+| Test desktop against the local backend | `…` | the change touches `desktop/**` |
+| Check CI | `gh pr checks {pr} --watch --fail-fast` | after the runner opens the PR |
+| Test the production webapp | `…` | after merge: listed for the user, never run |
+```
+
+The runner reads the section itself and runs its steps through the `check`
+tool, so it works whether or not Claude Code loads `AGENTS.md`.
+
+| When | What happens |
+| --- | --- |
+| **Setup** (and the first `refine` in a repository) | Checks that the section exists, shows it to the user, and says once: "I'll trust this procedure exactly; if it's wrong, I'll stop and ask you to fix it." Without one, the user writes it before any staged run; the harness can draft it from the project's docs for the user to correct |
+| **Understand** | The acceptance criteria say what must be true; the procedure says how the project checks things. The spec states verification only where this change departs from the procedure ("a unit test is enough here", "also run on k3s") |
+| **Plan** | `select-checks` turns the steps that apply to this change, plus a check for every acceptance criterion (usually a new test), into the plan's checks. They are data in the plan, fixed before Build starts. A criterion that no step can check is a question for the user, never a reason to build infrastructure |
+| **Preflight** (the runner, before Build) | Runs the applicable steps once at the starting commit. Existing checks must pass; a new criterion check must run and fail, since the feature does not exist yet. If a step cannot run, the run stops before anything is spent: "the verification procedure is not in place: `<step>`: `<error>`". The result is cached per commit and procedure |
+| **Verify** | Runs the plan's checks. A failing step is re-run at the starting commit, without the change. **Fails there too:** the procedure is not in place; the run stops, names the step and the error, and asks the user to fix the procedure. **Passes there:** the change broke it, and the unit goes back to Build |
+| **After the fix** | `/replicable:resume <issue>` re-runs the preflight and continues at Verify. The Build work is kept |
+
+**What the harness answers for:** following the procedure exactly, and
+finding out, before it spends anything, that a step cannot run. **What it
+does not answer for:** a procedure that is missing, wrong, or needs what the
+machine lacks (no Dockerfile, no Docker engine, no credentials).
+
+**Stages shrink to the procedure.** With only a unit-test step, Verify runs
+the unit tests and the review. Deliver commits on a branch, and the runner
+opens a PR when there is a remote; the delivery tier runs only when the
+procedure has delivery steps and the spec asks for them. Every run records
+each step as passed, failed, or not run and why ("after merge"), so its
+result says exactly what was verified and what was not.
+
+**Checks are data.** A check is a one-off command, or a service check that
+starts something, waits until it is ready, probes it, and stops it:
+
+```json
+{"name": "login-smoke", "criterion": "AC2", "step": "Build backend, MCP and webapp",
+ "start": "npm run dev", "ready": "http://localhost:3000",
+ "probe": "curl -fsS -X POST localhost:3000/login -d @fixtures/user.json | grep -q dashboard"}
+```
+
+The `test` setting (`.claude/replicable.json`) stays for the interactive test
+gate, as today; staged runs use the procedure.
 
 ## Anatomy of a skill
 
@@ -107,8 +169,8 @@ project-specific is a slot, or one of the project's own skills.
 | `read` | `Read`, `Glob`, `Grep`; graphify `query`, `explain`, `path`, `affected`, `god-nodes`; git `status`, `diff`, `log`, `show`, `blame`; the plugin's `info` tool |
 | `explore` | `read`, plus the `graph-explorer` subagent |
 | `edit-code` | `Edit`, `Write`, `NotebookEdit` on files outside the test paths |
-| `edit-tests` | The same tools on files inside the test paths (`checks.tests.paths`) |
-| `run-checks` | The project's configured checks (through the `check` tool, [D6](#decisions-for-review)), and a selection of tests |
+| `edit-tests` | The same tools on files inside the project's test paths |
+| `run-checks` | The plan's checks, through the `check` tool: the procedure's steps and the criterion checks. Nothing else counts as passing |
 | `git-commit` | git `add`, `commit`, `restore`, and `reset --soft` back to the run's base: only commits this run made |
 | `tracker-read` | Reading the issue and its comments (`gh issue view`) |
 | `tracker-write` | Editing the issue body or commenting. **Understand only**, and only after the user approves the text |
@@ -116,9 +178,11 @@ project-specific is a slot, or one of the project's own skills.
 | `handoff` | The `report` and `handoff` tools, which write only to the plugin's data dir |
 
 **Never, in any headless stage:** `git push`, any write through `gh`,
-network access other than reading the issue, installing dependencies (unless
-the `install` slot allows a command), editing outside the worktree, changing
-hook or permission settings, and `--no-verify`. Pushing, opening the PR and
+network access other than reading the issue, installing dependencies other
+than through the procedure, editing outside the worktree, changing hook or
+permission settings, `--no-verify`, and creating or changing the
+verification procedure or what it relies on (Dockerfiles, compose files, CI
+workflows, deploy configuration) unless the spec asks for it. Pushing, opening the PR and
 deploying belong to the runner, never the agent ([D2](#decisions-for-review)).
 The benchmark already enforces this for its runs.
 
@@ -173,9 +237,13 @@ The project's own skills load from the repository as they always do
 ones that name other stages: project skills with `skillOverrides` through
 `--settings`, and skills of plugins the repository enables with permission
 deny rules, because `skillOverrides` does not apply to plugin skills. The
-stage hook still checks every `Skill` call and traces it. It also covers the installed plugin's own skills (`epcc`, `tdd`,
-the wiki skills), which stay listed because that plugin is loaded for its
-hooks and MCP server.
+stage hook still checks every `Skill` call and traces it. It also covers
+the installed plugin's own skills (`epcc`, `tdd`, the wiki skills), which
+stay listed because that plugin is loaded for its hooks and MCP server.
+
+A stage's set is the same in every run, never trimmed to the plan, so runs
+stay comparable. A skill the plan does not need, such as `write-tests` when
+there are no tests to write, is simply not called.
 
 To verify in U4 and U6: that a copied skill tree loads (plugin paths may not
 leave the plugin's directory, so the runner copies rather than links), and
@@ -187,12 +255,12 @@ that hiding project skills through `--settings` works in headless sessions.
 
 #### `assess-task`
 
-- **Outcome.** The request is understood well enough to spec or to drop: what kind of change it is, whether it is still wanted and its code still live, and what is unclear.
+- **Outcome.** The request is understood well enough to spec or to drop: what kind of change it is, whether it is still wanted and its code still live, whether the project's verification procedure exists, and what is unclear.
 - **Inputs.** The request (issue number or text), the wiki index, the code graph.
 - **Actions.** `read`, `tracker-read`.
 - **Exit check.** (M) Every path and symbol the report names resolves at HEAD (file exists, `graphify explain` exits 0). (J) Every open question is either answered by the user or listed.
-- **Report.** `kind` (feature, bug, refactor, chore, docs, investigation), `live`: evidence the code is still used (callers, recent commits), `still_wanted` (yes, no, ask), `open_questions`, `next` (explore-code, write-spec, stop).
-- **Slots.** `tracker`.
+- **Report.** `kind` (feature, bug, refactor, chore, docs, investigation), `live`: evidence the code is still used (callers, recent commits), `still_wanted` (yes, no, ask), `verification` (the procedure's location and steps, or missing), `open_questions`, `next` (explore-code, write-spec, stop).
+- **Slots.** `tracker`, `verification`.
 
 #### `explore-code` (Understand and Plan)
 
@@ -205,12 +273,12 @@ that hiding project skills through `--settings` works in headless sessions.
 
 #### `write-spec`
 
-- **Outcome.** The issue holds a spec the Plan stage can run on: problem, goals, design, required design choices (each with the choice made), non-goals, and acceptance criteria, each one testable.
+- **Outcome.** The issue holds a spec the Plan stage can run on: problem, goals, design, required design choices (each with the choice made), non-goals, and acceptance criteria, each one testable under the project's verification procedure, or under verification the spec states where this change departs from it.
 - **Inputs.** The `assess-task` and `explore-code` reports, the conversation.
 - **Actions.** `read`, `tracker-read`; `tracker-write` only after the user approves the final text.
 - **Exit check.** (M) The issue body validates against the spec template (U2): sections present, criteria written as a checklist, no required design choice left open. (J) The user approved it.
-- **Report.** `issue` (URL), `criteria` (count), `design_choices` (count), `open` (must be empty).
-- **Slots.** `spec.template`, `tracker`.
+- **Report.** `issue` (URL), `criteria` (count), `design_choices` (count), `verification` (departures from the procedure, if any), `open` (must be empty).
+- **Slots.** `spec.template`, `tracker`, `verification`.
 
 ### Plan (headless)
 
@@ -229,21 +297,21 @@ comment (U5); the agent never writes to the issue.
 
 #### `plan-change`
 
-- **Outcome.** A plan the gate accepts: units in dependency order, each with what changes, its files, the tests that prove it, its checks, and the acceptance criteria it covers; every criterion covered by at least one unit.
+- **Outcome.** A plan the gate accepts: units in dependency order, each with what changes, its files, the tests that prove it, its checks, and the acceptance criteria it covers. Every criterion is covered by a unit, and every unit serves a criterion: no work beyond the spec.
 - **Inputs.** The spec, the localisation, the estimate.
 - **Actions.** `read`, `handoff`.
-- **Exit check.** (M) The plan gate: every criterion maps to a unit and a check; every file exists at the base or is marked new; unit ids unique, dependencies acyclic, `units` equals the number of units.
+- **Exit check.** (M) The plan gate: every criterion maps to a unit and a check, and every unit to a criterion; every file exists at the base or is marked new; unit ids unique, dependencies acyclic, `units` equals the number of units.
 - **Report.** `units` (id, what, files with `new`, tests, checks, depends_on, criteria), `criteria` (id, text, units), and the `replicable-execution` block.
 - **Slots.** None.
 
 #### `select-checks`
 
-- **Outcome.** For every unit and for the whole change, the checks that prove it: the existing tests near it, the new tests to write, and the project's named checks that apply.
-- **Inputs.** The plan's units, the localisation, the project's checks.
+- **Outcome.** The plan's checks, fixed before Build starts: the procedure's steps that apply to this change, and a check for every acceptance criterion (usually a new test, or a service check), each with the command it runs.
+- **Inputs.** The spec, the plan's units, the localisation, the verification procedure.
 - **Actions.** `read`.
-- **Exit check.** (M) Every check is a configured check name, or a test path that exists or is planned as new; every criterion has at least one check; every unit's checks can be run as a selection.
-- **Report.** Per unit: `checks` (name, selection); for the change: `full` (the checks Verify runs).
-- **Slots.** `checks`, `test`.
+- **Exit check.** (M) Every check is a procedure step, or a criterion check that uses only what the procedure provides; every criterion has a check; no check needs infrastructure the procedure lacks. A criterion no step can check makes Plan stop and ask.
+- **Report.** Per unit: `checks`; for the change: `full` (the checks Verify runs); `post_merge` (steps listed for the user, never run).
+- **Slots.** `verification`.
 
 ### Build (headless)
 
@@ -254,7 +322,7 @@ comment (U5); the agent never writes to the issue.
 - **Actions.** `read`, `edit-code`, `edit-tests` (for tests the unit lists), `run-checks` (the unit's selection).
 - **Exit check.** (M) The diff touches the unit's files, and any other file is listed as a deviation with a reason; a `check` record of the unit's checks exists for the current tree.
 - **Report.** `unit`, `files_changed`, `deviations`, `checks` (record ids, pass or fail), `notes`.
-- **Slots.** `checks`, `install`.
+- **Slots.** `verification`.
 
 #### `write-tests`
 
@@ -263,7 +331,7 @@ comment (U5); the agent never writes to the issue.
 - **Actions.** `read`, `edit-tests`, `run-checks` (the new tests).
 - **Exit check.** (M) The new tests run; written first, they fail with an assertion, not an import or syntax error (recorded by the `check` tool).
 - **Report.** `tests` (path, name, criterion), `status` (failing-as-expected, passing), `notes`.
-- **Slots.** `checks.tests` (selection command and paths).
+- **Slots.** `verification` (its test steps).
 
 #### `run-checks` (Build and Verify)
 
@@ -272,25 +340,25 @@ comment (U5); the agent never writes to the issue.
 - **Actions.** `run-checks`. No edits.
 - **Exit check.** (M) A `check` record per check: command, exit code, duration, failing test names, tree hash.
 - **Report.** `records` (ids), `failing` (check, tests), `tree`.
-- **Slots.** `checks`, `test`, `environments` (for checks that need a local environment).
+- **Slots.** `verification`.
 
 #### `diagnose-failure`
 
-- **Outcome.** A root cause for one failing check: a located hypothesis, with evidence, that predicts what a fix changes, classified as the change, the test, the environment, or pre-existing.
+- **Outcome.** A root cause for one failing check: a located hypothesis, with evidence, that predicts what a fix changes, classified as the change, the test, or the procedure (the step also fails at the starting commit).
 - **Inputs.** A failing `check` record, the diff.
 - **Actions.** `read`; re-running the failing test; running it at the base commit to tell a regression from a pre-existing failure.
-- **Exit check.** (J) The hypothesis names a `path:line` and predicts the fix's effect. (M) "Pre-existing" is backed by a failing record at the base.
-- **Report.** `check`, `cause`, `class`, `evidence`, `fix` (proposed), `confidence`.
-- **Slots.** `checks`.
+- **Exit check.** (J) The hypothesis names a `path:line` and predicts the fix's effect. (M) "The procedure" is backed by a failing record of the same step at the starting commit.
+- **Report.** `check`, `cause`, `class`, `evidence`, `fix` (proposed; none for "the procedure", which goes to the user), `confidence`.
+- **Slots.** `verification`.
 
 #### `fix-failure`
 
 - **Outcome.** The diagnosed cause is fixed: the failing check passes and none of the unit's checks got worse.
 - **Inputs.** The diagnosis.
-- **Actions.** `read`, `edit-code`, `run-checks`. `edit-tests` only when the diagnosis class is "the test", and then it is a deviation Verify must review. Never deleting, skipping or weakening a test to make it pass.
+- **Actions.** `read`, `edit-code`, `run-checks`. `edit-tests` only when the diagnosis class is "the test", and then it is a deviation Verify must review. Never deleting, skipping or weakening a test to make it pass, and never changing the procedure or what it relies on.
 - **Exit check.** (M) A passing record of the failing check, and records of the unit's checks no worse than before, on the same tree.
 - **Report.** `files_changed`, `records`, `deviations`.
-- **Slots.** `checks`.
+- **Slots.** `verification`.
 
 ### Verify (headless)
 
@@ -406,6 +474,7 @@ return to an earlier skill, and any return to an earlier stage, is a
 
 ```
 Plan:    explore-code ─► assess-change ─► plan-change ─► select-checks ─► handoff
+Preflight (runner): the applicable procedure steps at the starting commit ─► Build
 Build, per unit:
          [write-tests] ─► implement-unit ─► run-checks ─┬─► handoff (next unit, or Verify)
                                               ▲         └─► diagnose-failure ─► fix-failure ─┐
@@ -494,7 +563,7 @@ claim it could check.
 | **Build → Verify** | `units` (id, status `done` or `blocked`, files changed, check records), `claims` (criterion → evidence) |
 | **Verify → Build** | `findings`, failing records, `reopen` (unit ids) |
 | **Verify → Deliver** | `verdict: pass`, `criteria` (all met, with evidence), the `full` record for `git.tree` |
-| **Deliver → done** | `commits`, and the project skills it ran (`project_skills`: skill, status) |
+| **Deliver → done** | `commits`, the project skills it ran (`project_skills`: skill, status), and `verification`: each procedure step passed, failed, or not run and why |
 | **Single-stage → done** | Build's, Verify's and Deliver's fields together |
 
 ### Validation by the runner
@@ -506,9 +575,11 @@ the errors as context; it counts towards `handoff_rejects`.
 | Transition | The runner checks |
 | --- | --- |
 | Every transition | Schema; `git` recomputed; every check record exists, and a check claimed as passing ran on `git.tree` |
-| **Plan → Execution** (the plan gate) | Every criterion has a unit and a check; every file exists at the base or is marked new; ids unique, dependencies acyclic; `units` matches; the estimate's graph fields match a recomputation at `measured_at`; the route follows the rule or `reason` says why |
+| **Plan → Execution** (the plan gate) | Every criterion has a unit and a check, and every unit a criterion; every check is a procedure step or a criterion check that uses only what the procedure provides; every file exists at the base or is marked new; ids unique, dependencies acyclic; `units` matches; the estimate's graph fields match a recomputation at `measured_at`; the route follows the rule or `reason` says why |
+| **Preflight** (before Build) | The applicable procedure steps run at the starting commit: existing checks pass, new criterion checks run and fail. Otherwise the run stops: the procedure is not in place |
 | **Build → Verify** | Every unit `done` or `blocked`; changed files within the plan plus deviations; each done unit's checks passing on the final tree |
-| **Verify → Build** | `changes-needed` with at least one finding or failing record, and `reopen` not empty |
+| **Verify → Build** | `changes-needed` with at least one finding, or a failing step that passes at the starting commit; `reopen` not empty |
+| **Verify → the user** | A failing step that also fails at the starting commit: the procedure is not in place. The run stops and asks for it to be fixed, then resumes at Verify |
 | **Verify → Deliver** | Verdict pass; every criterion met (or marked manual in the plan); `full` passing on `git.tree` |
 | **Deliver → done** | Worktree clean; HEAD's tree equals the verified tree; at least one commit since the base; the remote unchanged |
 
@@ -523,41 +594,33 @@ the rest is given as paths.
 
 ## Project slots and the project's skills
 
-All of it lives in `.claude/replicable.json`, resolved by `harness/project.py`
-and served to skills by the `info` tool. Every slot has a default, so a
-project with no config still runs. Proposed shape (U3 fixes it):
+The one thing a project must provide is its
+[verification procedure](#verification-the-projects-procedure). Everything
+else lives in `.claude/replicable.json`, resolved by `harness/project.py`
+and served to skills by the `info` tool, and every slot has a default.
+Proposed shape (U3 fixes it):
 
 ```json
 {
-  "test": "python3 -m pytest -q",
-  "checks": {
-    "tests": {"select": "python3 -m pytest -q {tests}", "paths": ["tests/**"]},
-    "lint":  {"all": "ruff check .", "select": "ruff check {files}", "when": ["**/*.py"]},
-    "types": {"all": "mypy src", "when": ["src/**"]}
-  },
+  "verification": "AGENTS.md#verification",
   "surfaces": {"cli": ["src/cli/**"], "api": ["src/api/**"], "schema": ["migrations/**"]},
   "risks": {"migration": ["migrations/**"], "security": ["src/auth/**"], "release": ["pyproject.toml"]},
   "route": {"multi_stage_when": {"units": 4, "components": 3, "risks": ["migration", "security", "release"]}},
   "caps": {"fix_cycles": 3, "verify_returns": 2},
   "commit": {"style": "Imperative subject; body says why", "issue_ref": "Part of #{issue}"},
   "branch": "replicable/{issue}-{slug}",
-  "review": {"guide": "CONTRIBUTING.md"},
-  "environments": {"compose": {"up": "docker compose up -d --wait", "down": "docker compose down -v"}},
-  "install": null
+  "review": {"guide": "CONTRIBUTING.md"}
 }
 ```
 
 | Slot | Used by | Default |
 | --- | --- | --- |
-| `test` | `run-checks`, `select-checks` | Detected from the project (today's behaviour) |
-| `checks` | `select-checks`, `run-checks`, `write-tests`, `implement-unit` | One check, `tests`, from `test`; test paths from the pattern `post_edit.py` uses |
+| `verification` | Every stage, the runner | `AGENTS.md`, section `## Verification` |
 | `surfaces`, `risks` | `assess-change`, the runner's measures | None: judged, not measured |
 | `route` | `assess-change`, the plan gate | The rule above |
 | `caps` | The stage hook, the runner | The table above |
 | `commit`, `branch` | `commit-change`, the runner | Plain messages that reference the issue; `replicable/{issue}-{slug}` |
 | `review.guide` | `review-change` | None |
-| `environments` | `run-checks` (local environments only) | None |
-| `install` | `implement-unit` | None: no dependency installs |
 | `spec.template` | `write-spec`, the gate | The plugin's template (U2) |
 | `tracker` | `assess-task`, `write-spec`, the runner | GitHub through `gh` |
 
@@ -569,7 +632,7 @@ add a migration. Nothing in the plugin's config lists them.
 
 - **They come from the repository:** `.claude/skills/`, and the plugins the
   repository enables in its committed `.claude/settings.json` (each installed
-  once per clone; readiness flags one that is not). Personal skills and
+  once per clone; setup flags one that is not). Personal skills and
   plugins (`~/.claude/`) never reach a headless run: the runner starts
   Claude Code with `--setting-sources project`, so a teammate, CI and the
   benchmark get the same run.
@@ -628,11 +691,17 @@ and against the transcripts of real sessions on this machine.
 | The transition graph | The ordered skill rows per session: paths, loops, backward jumps, repeated subgraphs |
 | Work outside any skill | Time and tokens outside every span, `(no skill)` |
 | Caps and denials | Stage hook rows with `outcome: block` and a reason (`not_in_stage`, `cap:fix_cycles`, …) |
-| Plan measures | The gate's result, the estimate against the same fields measured on the diff, re-routes, escalations; recall of the reference's core files (`localisation.core_files`) and of the hidden tests' areas (`criteria[].checks`) (U8) |
+| Plan measures | The gate's result, the estimate against the same fields measured on the diff, re-routes, escalations; recall of the reference's core files (`localisation.core_files`) and of the hidden tests' areas (`criteria[].checks`); the checks Plan chose against the task's reference verification, recall and precision (U8) |
 
 `analyze-session` (U7) computes the same tables for any saved session. Without
 a trace, as in an interactive session with tracing off, spans come from
 `Skill` calls and slash commands in the transcript.
+
+In the benchmark, the suite writes each dataset's verification procedure for
+its pinned commit, the same for every arm, and `validate` proves its steps
+run on the bench machine. A task whose procedure cannot run there is
+invalid, like a task whose reference solution fails: it never counts as a
+harness failure.
 
 ## Existing skills, agents and hooks
 
@@ -658,7 +727,7 @@ Each has a recommendation; the maintainer decides before U3.
 | D3 | **Commits during Build** | The agent commits as it goes; the runner checkpoints at each handoff and `commit-change` rewrites the run's checkpoints into final commits | Runner checkpoints. Verify then reviews a fixed tree, and `commit-change` only touches this run's commits |
 | D4 | **Build granularity in multi-stage** | One session for all units; one session per unit | One per unit: small contexts, and per-unit cost and iterations |
 | D5 | **`diagnose-failure` in Verify** | Not allowed (as in #2's plan); allowed, read-only | Allowed: Verify-to-Build handoffs then carry a cause, not only a failing check |
-| D6 | **How checks run** | Through Bash (a claim in the transcript); through a `check` MCP tool that runs the configured command and records exit code, duration, failing tests and tree hash | The `check` tool: exit checks and handoffs then rest on records. MCP tool timeouts must cover the slowest check |
+| D6 | **How checks run** | — | **Decided:** checks are data in the plan, run only through the `check` MCP tool, which records exit code, duration, failing tests and tree hash, and supports service checks (start, wait until ready, probe, stop). MCP tool timeouts must cover the slowest check |
 | D7 | **Per-skill tool boundaries** | Record only; enforce behind a flag; native `disallowed-tools` | Record first, enforce behind `REPLICABLE_BOUNDARIES=enforce` (as #2's plan says); test `disallowed-tools` in U4 and adopt it where it holds |
 | D8 | **Test gate in staged runs** | Keep it; turn it off | Off: handoff validation is stricter and knows the stage. A unit that ends red to escalate must not be blocked |
 | D9 | **`epcc` and `tdd`** | Keep; rewrite as compositions of universal skills; retire | Keep unchanged until U8 compares them with the staged harness |

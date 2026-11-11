@@ -114,15 +114,15 @@ tool, so it works whether or not Claude Code loads `AGENTS.md`.
 
 | When | What happens |
 | --- | --- |
-| **Setup** (and the first `refine` in a repository) | Checks that the section exists, shows it to the user, and says once: "I'll trust this procedure exactly; if it's wrong, I'll stop and ask you to fix it." Without one, the user writes it before any staged run; the harness can draft it from the project's docs for the user to correct |
+| **`/replicable:verify`** (the user asks, once) | Runs every step once at the current commit and shows the results. If all run, it writes the **verification record** in the plugin's data dir: the procedure's hash, the commit, the date, and each step's result and duration. The record is per machine and never committed, because whether a procedure runs depends on the machine (a Docker engine, credentials, macOS) as much as on the repository. Without a procedure, the user writes one first; the harness can draft it from the project's docs for the user to correct |
 | **Understand** | The acceptance criteria say what must be true; the procedure says how the project checks things. The spec states verification only where this change departs from the procedure ("a unit test is enough here", "also run on k3s") |
 | **Plan** | `select-checks` turns the steps that apply to this change, plus a check for every acceptance criterion (usually a new test), into the plan's checks. They are data in the plan, fixed before Build starts. A criterion that no step can check is a question for the user, never a reason to build infrastructure |
-| **Preflight** (the runner, before Build) | Runs the applicable steps once at the starting commit. Existing checks must pass; a new criterion check must run and fail, since the feature does not exist yet. If a step cannot run, the run stops before anything is spent: "the verification procedure is not in place: `<step>`: `<error>`". The result is cached per commit and procedure |
-| **Verify** | Runs the plan's checks. A failing step is re-run at the starting commit, without the change. **Fails there too:** the procedure is not in place; the run stops, names the step and the error, and asks the user to fix the procedure. **Passes there:** the change broke it, and the unit goes back to Build |
-| **After the fix** | `/replicable:resume <issue>` re-runs the preflight and continues at Verify. The Build work is kept |
+| **Every run** (the runner, before Plan) | Reads the record and compares the procedure's hash. No step is run. A missing record, or a procedure edited since it was recorded, means no feature work: the runner asks the user to run `/replicable:verify` |
+| **Any check that fails** (from Build's first unit on) | The failing step is re-run at the starting commit, without the change. **Fails there too:** the procedure is no longer in place. The runner clears the record, puts the run on **standby** (worktree, branch and handoffs kept), and comments on the issue that the feature cannot be verified until the procedure is fixed. **Passes there:** the change broke it, and the unit goes back to Build. Runs that never fail a check never pay for this |
+| **After the fix** | `/replicable:verify` records the procedure again, and `/replicable:resume <issue>` continues the run where it stopped |
 
 **What the harness answers for:** following the procedure exactly, and
-finding out, before it spends anything, that a step cannot run. **What it
+stopping as soon as a step cannot run. **What it
 does not answer for:** a procedure that is missing, wrong, or needs what the
 machine lacks (no Dockerfile, no Docker engine, no credentials).
 
@@ -474,7 +474,7 @@ return to an earlier skill, and any return to an earlier stage, is a
 
 ```
 Plan:    explore-code ─► assess-change ─► plan-change ─► select-checks ─► handoff
-Preflight (runner): the applicable procedure steps at the starting commit ─► Build
+Start (runner): the verification record matches the procedure ─► Plan
 Build, per unit:
          [write-tests] ─► implement-unit ─► run-checks ─┬─► handoff (next unit, or Verify)
                                               ▲         └─► diagnose-failure ─► fix-failure ─┐
@@ -576,10 +576,10 @@ the errors as context; it counts towards `handoff_rejects`.
 | --- | --- |
 | Every transition | Schema; `git` recomputed; every check record exists, and a check claimed as passing ran on `git.tree` |
 | **Plan → Execution** (the plan gate) | Every criterion has a unit and a check, and every unit a criterion; every check is a procedure step or a criterion check that uses only what the procedure provides; every file exists at the base or is marked new; ids unique, dependencies acyclic; `units` matches; the estimate's graph fields match a recomputation at `measured_at`; the route follows the rule or `reason` says why |
-| **Preflight** (before Build) | The applicable procedure steps run at the starting commit: existing checks pass, new criterion checks run and fail. Otherwise the run stops: the procedure is not in place |
+| **Start of a run** | A verification record on this machine matches the procedure's hash. Otherwise the run does not start |
 | **Build → Verify** | Every unit `done` or `blocked`; changed files within the plan plus deviations; each done unit's checks passing on the final tree |
 | **Verify → Build** | `changes-needed` with at least one finding, or a failing step that passes at the starting commit; `reopen` not empty |
-| **Verify → the user** | A failing step that also fails at the starting commit: the procedure is not in place. The run stops and asks for it to be fixed, then resumes at Verify |
+| **Any stage → standby** | A failing step that also fails at the starting commit: the procedure is no longer in place. The record is cleared and the run waits until the user fixes the procedure, records it again, and resumes |
 | **Verify → Deliver** | Verdict pass; every criterion met (or marked manual in the plan); `full` passing on `git.tree` |
 | **Deliver → done** | Worktree clean; HEAD's tree equals the verified tree; at least one commit since the base; the remote unchanged |
 
@@ -698,8 +698,9 @@ a trace, as in an interactive session with tracing off, spans come from
 `Skill` calls and slash commands in the transcript.
 
 In the benchmark, the suite writes each dataset's verification procedure for
-its pinned commit, the same for every arm, and `validate` proves its steps
-run on the bench machine. A task whose procedure cannot run there is
+its pinned commit, the same for every arm, and `validate` plays
+`/replicable:verify`, recording the procedure as working on the bench machine
+for the pinned commit. A task whose procedure cannot run there is
 invalid, like a task whose reference solution fails: it never counts as a
 harness failure.
 

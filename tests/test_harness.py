@@ -57,7 +57,8 @@ def make_repo(files=FIXTURE, commit=False) -> tempfile.TemporaryDirectory:
 
 
 def env_for(root: Path, **extra) -> dict:
-    env = {k: v for k, v in os.environ.items() if k not in {"LAB_TEST_CMD", "LAB_TEST_GATE", "GRAPHIFY_BIN"}}
+    env = {k: v for k, v in os.environ.items()
+           if k not in {"LAB_TEST_CMD", "LAB_TEST_GATE", "GRAPHIFY_BIN", "REPLICABLE_TRACE"}}
     env.update(HARNESS_ROOT=str(root), HARNESS_DATA=str(root / ".state"))
     env.update(extra)
     return env
@@ -242,6 +243,156 @@ class TestGateChangeDetectionTests(unittest.TestCase):
     def test_runs_on_code_changes(self):
         (self.root / "pkg" / "util.py").write_text("def clean(v):\n    return v\n")
         self.assertEqual(self.gate()["decision"], "block")
+
+
+FAKE_GRAPHIFY = '''#!/usr/bin/env python3
+import os, sys
+mode = os.environ.get("FAKE_GRAPHIFY", "hits")
+if sys.argv[1] == "update":
+    sys.exit(1 if mode == "fail_update" else 0)
+if mode == "not_modeled":
+    sys.exit(3)
+if mode == "hits":
+    print("- clean pkg/util.py:L1")
+    print("- run pkg/service.py:L3")
+    print("- test_run tests/test_service.py:L3")
+'''
+
+
+class HookTraceTests(unittest.TestCase):
+    """REPLICABLE_TRACE records every hook decision with a reason code; without it nothing is written."""
+
+    def setUp(self):
+        self.tmp = make_repo(commit=True)
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        self.state = Path(state.name)
+        self.trace_file = self.state / "out" / "trace.jsonl"
+        fake = self.state / "graphify"
+        fake.write_text(FAKE_GRAPHIFY)
+        fake.chmod(0o755)
+        self.fake_graphify = str(fake)
+        self.env = env_for(self.root, HARNESS_DATA=str(self.state / "data"), REPLICABLE_TRACE=str(self.trace_file))
+
+    def run_hook(self, name, event=None, **env):
+        return subprocess.run([sys.executable, str(PLUGIN / "hooks" / name)],
+                              input=json.dumps(event if event is not None else {}),
+                              capture_output=True, text=True, env=dict(self.env, **env), timeout=60)
+
+    def traced(self, name, event=None, **env):
+        """Run a hook and return its single trace row."""
+        before = self.rows()
+        res = self.run_hook(name, event, **env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        new = self.rows()[len(before):]
+        self.assertEqual(len(new), 1, new)
+        return new[0]
+
+    def rows(self):
+        if not self.trace_file.exists():
+            return []
+        return [json.loads(line) for line in self.trace_file.read_text().splitlines()]
+
+    def no_graphify(self):
+        path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep)
+                               if not (Path(p) / "graphify").exists())
+        return {"PATH": path}
+
+    def edit_event(self, rel):
+        return {"session_id": "s1", "tool_use_id": "toolu_1", "hook_event_name": "PostToolUse",
+                "tool_name": "Edit", "tool_input": {"file_path": str(self.root / rel)}}
+
+    def test_rows_carry_identity_and_timing(self):
+        row = self.traced("post_edit.py", self.edit_event("README.md"))
+        self.assertEqual((row["hook"], row["outcome"], row["reason"]), ("post_edit", "skip", "docs"))
+        self.assertEqual((row["session_id"], row["tool_use_id"], row["event"]), ("s1", "toolu_1", "PostToolUse"))
+        self.assertEqual(row["plugin_version"], project.plugin_version())
+        self.assertIsInstance(row["duration_ms"], int)
+
+    def test_session_start_paths(self):
+        self.assertEqual(self.traced("session_start.py", **self.no_graphify())["reason"], "no_graphify")
+        row = self.traced("session_start.py", GRAPHIFY_BIN=self.fake_graphify)
+        self.assertEqual((row["outcome"], row["reason"]), ("context", "built,no_integration"))
+        self.assertGreater(row["chars"], 0)
+        row = self.traced("session_start.py", GRAPHIFY_BIN=self.fake_graphify, FAKE_GRAPHIFY="fail_update")
+        self.assertEqual(row["reason"], "build_failed,no_integration")
+
+    def test_post_edit_paths(self):
+        fake = {"GRAPHIFY_BIN": self.fake_graphify}
+        self.assertEqual(self.traced("post_edit.py", {})["reason"], "no_path")
+        self.assertEqual(self.traced("post_edit.py", self.edit_event("pkg/util.py"), **self.no_graphify())["reason"],
+                         "no_graphify")
+        outside = {"tool_input": {"file_path": "/elsewhere/x.py"}}
+        self.assertEqual(self.traced("post_edit.py", outside, **fake)["reason"], "outside_root")
+        for mode, outcome, reason in (("fail_update", "context", "update_failed"), ("not_modeled", "skip", "not_modeled"),
+                                      ("no_hits", "skip", "no_hits"), ("hits", "context", "reported")):
+            row = self.traced("post_edit.py", self.edit_event("pkg/util.py"), FAKE_GRAPHIFY=mode, **fake)
+            self.assertEqual((row["outcome"], row["reason"]), (outcome, reason), mode)
+        self.assertEqual((row["symbols"], row["files"], row["tests"]), (3, 3, 1))
+
+    def test_test_gate_paths(self):
+        self.assertEqual(self.traced("test_gate.py")["reason"], "off")
+        gate = {"LAB_TEST_GATE": "1"}
+        self.assertEqual(self.traced("test_gate.py", **gate)["reason"], "no_code_changes")
+        (self.root / "pkg" / "util.py").write_text("def clean(v):\n    return v\n")
+        row = self.traced("test_gate.py", LAB_TEST_CMD="true", **gate)
+        self.assertEqual((row["outcome"], row["reason"], row["after_blocks"]), ("pass", "tests_pass", 0))
+        failing = dict(gate, LAB_TEST_CMD="false", LAB_TEST_GATE_MAX="1")
+        row = self.traced("test_gate.py", **failing)
+        self.assertEqual((row["outcome"], row["attempt"], row["limit"]), ("block", 1, 1))
+        row = self.traced("test_gate.py", **failing)
+        self.assertEqual((row["outcome"], row["reason"]), ("gave_up", "cap_hit"))
+
+    def test_test_gate_without_a_command(self):
+        tmp = make_repo({"main.c": "int main(){}\n"}, commit=True)
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / "main.c").write_text("int main(){return 1;}\n")
+        row = self.traced("test_gate.py", HARNESS_ROOT=tmp.name, LAB_TEST_GATE="1")
+        self.assertEqual((row["outcome"], row["reason"]), ("skip", "no_command"))
+
+    def test_wiki_hook_paths(self):
+        self.assertEqual(self.traced("wiki_flag.py", self.edit_event("pkg/util.py"))["reason"], "no_wiki")
+        self.assertEqual(self.traced("wiki_reminder.py")["reason"], "no_wiki")
+        for rel, body in WIKI_FIXTURE.items():
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(textwrap.dedent(body).lstrip())
+        self.assertEqual(self.traced("wiki_reminder.py")["reason"], "nothing_pending")
+        row = self.traced("wiki_flag.py", self.edit_event("src/billing.py"))
+        self.assertEqual((row["outcome"], row["reason"], row["pages"]), ("context", "flagged", 1))
+        self.assertEqual(self.traced("wiki_flag.py", self.edit_event("src/billing.py"))["reason"],
+                         "not_covered_or_already_flagged")
+        self.assertEqual(self.traced("wiki_reminder.py")["reason"], "pending")
+        self.assertEqual(self.traced("wiki_flag.py", self.edit_event("wiki/domain/invoices.md"))["reason"], "page_edited")
+
+    def test_crashes_are_recorded_by_type_only(self):
+        (self.root / "pkg" / "util.py").write_text("x = 1\n")
+        res = self.run_hook("test_gate.py", LAB_TEST_GATE="1", LAB_TEST_GATE_MAX="not-a-number")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual(self.rows()[-1]["outcome"], "error")
+        self.assertEqual(self.rows()[-1]["reason"], "exception:ValueError")
+
+    def test_off_by_default_and_1_writes_to_the_data_dir(self):
+        env = dict(self.env)
+        env.pop("REPLICABLE_TRACE")
+        res = subprocess.run([sys.executable, str(PLUGIN / "hooks" / "test_gate.py")], input="{}",
+                             capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(res.returncode, 0)
+        self.assertFalse(self.trace_file.exists())
+        self.assertFalse((self.state / "data" / "trace.jsonl").exists())
+        self.run_hook("test_gate.py", REPLICABLE_TRACE="1")
+        rows = (self.state / "data" / "trace.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(rows[0])["reason"], "off")
+
+    def test_an_unwritable_trace_changes_nothing(self):
+        (self.root / "pkg" / "util.py").write_text("x = 1\n")
+        env = {"LAB_TEST_GATE": "1", "LAB_TEST_CMD": "false"}
+        res = self.run_hook("test_gate.py", REPLICABLE_TRACE="/dev/null/not/a/dir/trace.jsonl", **env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(json.loads(res.stdout)["decision"], "block")
+        self.assertEqual(res.stderr, "")
 
 
 import wiki  # noqa: E402

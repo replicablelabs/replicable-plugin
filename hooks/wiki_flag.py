@@ -8,7 +8,13 @@ its flag. Silent when the project has no wiki, and on anything unexpected.
 
 from pathlib import Path
 
-from _common import ROOT, context, read_event
+from _common import ROOT, context, read_event, trace
+
+
+def skip(reason: str) -> None:
+    trace("skip", reason)
+    raise SystemExit(0)
+
 
 try:
     import _wiki_flags as flags
@@ -16,24 +22,30 @@ try:
     event = read_event()
     tool_input = event.get("tool_input") or {}
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    if not file_path or not (ROOT / "wiki").is_dir():
-        raise SystemExit(0)
+    if not file_path:
+        skip("no_path")
+    if not (ROOT / "wiki").is_dir():
+        skip("no_wiki")
     try:
         rel = Path(file_path).resolve().relative_to(ROOT).as_posix()
     except ValueError:
-        raise SystemExit(0)  # outside this project
+        skip("outside_root")
     if rel.startswith("wiki/"):
         flags.clear(rel)
-        raise SystemExit(0)
+        skip("page_edited")
     new = flags.flag(rel)
 except SystemExit:
     raise
-except Exception:
+except Exception as exc:
+    trace("error", f"exception:{type(exc).__name__}")
     raise SystemExit(0)  # helper hook: fail open
 
 if new:
     pages = ", ".join(page for page, _ in new)
-    context("PostToolUse",
-            f"wiki: {rel} is described by {pages}. Check that the page still holds; update it (or bump `updated` "
+    text = (f"wiki: {rel} is described by {pages}. Check that the page still holds; update it (or bump `updated` "
             "if it does) in this same change, for example with the wiki-ingest skill, before you finish. "
             "CI fails a PR that changes a page's code without touching the page.")
+    context("PostToolUse", text)
+    trace("context", "flagged", pages=len(new), chars=len(text))
+else:
+    trace("skip", "not_covered_or_already_flagged")

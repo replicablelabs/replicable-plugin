@@ -592,12 +592,13 @@ add a migration. Nothing in the plugin's config lists them.
   with the `report` tool also gets an exact span end and outcome. The
   benchmark never runs them: it measures the harness as shipped, and its
   datasets are assumed to carry no project skills.
-- **Same names do not override.** Plugin skills are namespaced, so a project
-  skill named like a universal one loads beside it and replaces nothing.
-  Readiness flags the collision, and in staged runs the stage hook denies the
-  project's one. The universal skills cannot be disabled or replaced; a
-  project adapts them through slots. That keeps every staged run on the
-  harness we guarantee, plus the project's additions.
+- **Names never clash.** Universal skills are namespaced (`replicable:<name>`,
+  or the per-stage plugin's prefix), so a project skill with the same short
+  name is simply another skill, chosen by its description like the rest. The
+  stage hook matches full names. Nothing overrides a universal skill: they
+  cannot be disabled or replaced, and a project adapts them through slots.
+  That keeps every staged run on the harness we guarantee, plus the
+  project's additions.
 
 ## Mechanisms (confirmed in Claude Code's docs)
 
@@ -611,7 +612,7 @@ and against the transcripts of real sessions on this machine.
 | What bypasses it? | Typing `/name` "bypasses `PreToolUse`"; `UserPromptExpansion` fires on that path instead, matched on the command name | Headless stage prompts never start with a slash command. Interactive sessions are unrestricted; a `UserPromptExpansion` hook records slash-command starts for the trace |
 | How does `disable-model-invocation` interact with in-stage invocation? | `true` removes the skill's description from Claude's context, and "if Claude tries anyway, Claude Code blocks the call"; it also blocks preloading into subagents | Universal skills must leave it `false`: the agent picks them itself. It stays on user-only skills (`setup`, `test-gate`, `headless-loop`). Stage restriction comes from the hook, not from this field |
 | Can settings hide plugin skills per stage? | No: "plugin skills are not affected by `skillOverrides`". Project skills are | A plugin's skills are listed in every session that loads it, so the universal skills are not installed for interactive use: the runner gives each stage its own ([how](#how-a-stage-gets-its-skills)), and hides out-of-stage project skills with `skillOverrides`. Permission rules (`Skill(name)` allow and deny) apply to both, as a second layer |
-| Which plugins and skills does a headless run load? | `claude -p` loads installed plugins. A repository enables plugins for its team in its committed `.claude/settings.json`; each collaborator installs them once per clone. Plugin skills are namespaced, so a same-named skill elsewhere "both load" | The project's skills come from the repository; same names never override a universal skill ([the project's skills](#the-projects-own-skills)) |
+| Which plugins and skills does a headless run load? | `claude -p` loads installed plugins. A repository enables plugins for its team in its committed `.claude/settings.json`; each collaborator installs them once per clone. Plugin skills are namespaced, so a same-named skill elsewhere "both load" | The project's skills come from the repository, and their names cannot clash with ours ([the project's skills](#the-projects-own-skills)) |
 | Can a session load more than one plugin directory? | Yes: `--plugin-dir` is repeatable, and a folder of plugins loads each child (`claude --help`, 2.1.322) | The installed plugin and the runner's per-stage plugin load side by side |
 | Which fields carry the ids the trace needs? | Every hook gets `session_id`, `transcript_path`, `cwd`, `hook_event_name`, and `prompt_id` after the first input; PreToolUse and PostToolUse add `tool_name`, `tool_input` and `tool_use_id`; inside a subagent, `agent_id` and `agent_type` | The trace keys each row by `session_id` and `tool_use_id` (as it does today) and adds `agent_id`, so a skill invoked inside a subagent is attributed to it |
 | Can a skill restrict its own tools? | `allowed-tools` only pre-approves ("it does not restrict which tools are available"). `disallowed-tools` removes tools "while this skill is active", and clears on the user's next message | Per-skill boundaries: the hooks record first ([D7](#decisions-for-review)). `disallowed-tools` is a native candidate, but when it clears in a headless session that invokes several skills must be tested in U4 |

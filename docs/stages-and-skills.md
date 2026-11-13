@@ -30,14 +30,15 @@ through a **validated handoff** instead of a growing transcript.
 ## Stages
 
 ```
- interactive                headless
-issue ─► Understand ─► Plan ─► Execution ─────────────────────────────────► (Learn)
+ runner     interactive                headless
+   S0 ─► issue ─► Understand ─► Plan ─► Execution ────────────────────────► (Learn)
                                  single-stage: one session, every execution skill
                                  multi-stage:  Build ⇄ Verify ─► Deliver
 ```
 
 | Stage | Runs | Input | Output | Decides |
 | --- | --- | --- | --- | --- |
+| **S0: verify the procedure** | The runner, at the start of every run; interactive the first time on a machine | The [verification procedure](#verification-the-projects-procedure) and this machine's record | A record that matches the procedure, or a question for the user | Whether feature work may start |
 | **Understand** | Interactive, with the user | A request: an issue, a message | The issue, refined into a spec (problem, goals, design, required design choices, non-goals, acceptance criteria) | What "done" means |
 | **Plan** | Headless, always | The refined issue, the code graph | A plan comment on the issue: units, files, tests, checks, the measured estimate and the route, in a `replicable-execution` block | **The route**, and nothing else about execution |
 | **Build** | Headless | The plan (and Verify's findings when sent back) | A change in the worktree that the unit checks pass | How each unit is implemented |
@@ -117,7 +118,7 @@ tool, so it works whether or not Claude Code loads `AGENTS.md`.
 | **`/replicable:verify`** (the user asks, once) | Runs every step once at the current commit and shows the results. If all run, it writes the **verification record** in the plugin's data dir: the procedure's hash, the commit, the date, and each step's result and duration. The record is per machine and never committed, because whether a procedure runs depends on the machine (a Docker engine, credentials, macOS) as much as on the repository. Without a procedure, the user writes one first; the harness can draft it from the project's docs for the user to correct |
 | **Understand** | The acceptance criteria say what must be true; the procedure says how the project checks things. The spec states verification only where this change departs from the procedure ("a unit test is enough here", "also run on k3s") |
 | **Plan** | `select-checks` turns the steps that apply to this change, plus a check for every acceptance criterion (usually a new test), into the plan's checks. They are data in the plan, fixed before Build starts. A criterion that no step can check is a question for the user, never a reason to build infrastructure |
-| **Every run** (the runner, before Plan) | Reads the record and compares the procedure's hash. No step is run. A missing record, or a procedure edited since it was recorded, means no feature work: the runner asks the user to run `/replicable:verify` |
+| **S0, the first state of every run** (before refinement) | Reads the procedure from the committed `AGENTS.md` and compares its hash with the record. **Match:** nothing runs; on to refinement. **No record, or the procedure changed:** S0 shows the steps, runs every local step once in a fresh worktree of the current commit (never in the user's checkout), and writes the record if all pass; a failure writes nothing and waits for the user, naming the step and the error; steps that need a PR or a merge are recorded as not tried. **No procedure:** S0 waits, and offers to draft one for the user to correct and commit |
 | **Any check that fails** (from Build's first unit on) | The failing step is re-run at the starting commit, without the change. **Fails there too:** the procedure is no longer in place. The runner clears the record, puts the run on **standby** (worktree, branch and handoffs kept), and comments on the issue that the feature cannot be verified until the procedure is fixed. **Passes there:** the change broke it, and the unit goes back to Build. Runs that never fail a check never pay for this |
 | **After the fix** | `/replicable:verify` records the procedure again, and `/replicable:resume <issue>` continues the run where it stopped |
 
@@ -679,6 +680,7 @@ and against the transcripts of real sessions on this machine.
 | Can a session load more than one plugin directory? | Yes: `--plugin-dir` is repeatable, and a folder of plugins loads each child (`claude --help`, 2.1.322) | The installed plugin and the runner's per-stage plugin load side by side |
 | Which fields carry the ids the trace needs? | Every hook gets `session_id`, `transcript_path`, `cwd`, `hook_event_name`, and `prompt_id` after the first input; PreToolUse and PostToolUse add `tool_name`, `tool_input` and `tool_use_id`; inside a subagent, `agent_id` and `agent_type` | The trace keys each row by `session_id` and `tool_use_id` (as it does today) and adds `agent_id`, so a skill invoked inside a subagent is attributed to it |
 | Can a skill restrict its own tools? | `allowed-tools` only pre-approves ("it does not restrict which tools are available"). `disallowed-tools` removes tools "while this skill is active", and clears on the user's next message | Per-skill boundaries: the hooks record first ([D7](#decisions-for-review)). `disallowed-tools` is a native candidate, but when it clears in a headless session that invokes several skills must be tested in U4 |
+| What happens when a hook times out or crashes, and when several match? | A command hook's `timeout` defaults to 600 s. At the timeout Claude Code cancels it and discards its output; on `PreToolUse` the tool call goes ahead unless the hook sets `"onFailure": "block"`. All matching hooks run in parallel, and hooks from the plugin, project, user and managed settings merge | The stage hook is a gate, so in headless staged runs it is registered with `onFailure: "block"` and fails closed. Every other hook, and the stage hook in interactive sessions where it only records, fails open as the project's rules require. No hook depends on another hook's output from the same event |
 | Do hooks in a skill's frontmatter end with the skill? | No: they stay registered "for the rest of the session" | Skill-scoped hooks cannot mark a skill's end or scope a boundary. The stage hook is a plugin hook that tracks the active skill itself |
 
 ## What gets measured
@@ -733,3 +735,8 @@ Each has a recommendation; the maintainer decides before U3.
 | D8 | **Test gate in staged runs** | Keep it; turn it off | Off: handoff validation is stricter and knows the stage. A unit that ends red to escalate must not be blocked |
 | D9 | **`epcc` and `tdd`** | Keep; rewrite as compositions of universal skills; retire | Keep unchanged until U8 compares them with the staged harness |
 | D10 | **How a skill reports** | A fenced block in the reply; a `report` MCP tool | The tool: validated when called, and an exact span end. A staged run needs the plugin's MCP server anyway (`info`, `check`, `handoff`), so the runner treats a server that failed to start (the stream's `init` event lists each server's status) as an infrastructure error, not as a run |
+| D11 | **Confirm before S0 first runs the procedure on a machine** | Ask once in an interactive session; just run | Ask once interactively: these are the repository's commands running on this machine for the first time. Headless runs go ahead |
+| D12 | **Teardown in the procedure** | None; an optional teardown step the harness always runs last | A teardown step, so verification and checks never leave containers or services behind |
+| D13 | **After a failed S0 step** | Resume from the failed step; re-run every step | Re-run every step, so the record always comes from one complete run |
+| D14 | **Who builds the code graph in staged runs** | The `session_start` hook in the first stage; the runner, before Plan, cached by commit | The runner: the build counts as setup, not as Plan's cost, and is reused across runs on the same commit. Interactive sessions keep today's hook |
+| D15 | **`fork` in the SessionStart matchers** | `startup\|resume` as today; `startup\|resume\|fork` | Add `fork`: a forked session is a resumed copy and should get the same context |
